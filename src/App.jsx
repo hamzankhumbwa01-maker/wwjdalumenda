@@ -165,7 +165,7 @@ const Icon = ({ name, size = 14, color = 'currentColor' }) => {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// PIE / DONUT CHART  (NWRA-style with legend, hover tooltips, centre label)
+// PIE / DONUT CHART 
 // ─────────────────────────────────────────────────────────────────────────────
 function PieChart({ data, title = 'ACT' }) {
   const [hov, setHov] = useState(null)
@@ -242,7 +242,7 @@ function PieChart({ data, title = 'ACT' }) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// BAR / SCATTER / LINE / BOX CHART  (NWRA-style, axes + hover values)
+// BAR / SCATTER / LINE / BOX CHART  
 // ─────────────────────────────────────────────────────────────────────────────
 function FieldChart({ data, type }) {
   const [hov, setHov] = useState(null)
