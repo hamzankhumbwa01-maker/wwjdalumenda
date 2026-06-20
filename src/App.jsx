@@ -63,7 +63,7 @@ const BASE_MAPS = {
   'CartoDB Dark':     { url: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', sub: ['a','b','c','d'], maxZoom: 20 },
 }
 
-// Security-grade color palette — no emojis used as icons
+// Security-grade color palette — no emojis used as iconsf
 const THREAT_RED    = '#e63946'
 const THREAT_AMBER  = '#f4a261'
 const SAFE_GREEN    = '#2ec4b6'
