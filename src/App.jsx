@@ -4,6 +4,21 @@ import 'leaflet/dist/leaflet.css'
 import './App.css'
 
 // ─────────────────────────────────────────────────────────────────────────────
+// RESPONSIVE BREAKPOINT HOOK
+// ─────────────────────────────────────────────────────────────────────────────
+function useIsMobile(breakpoint = 768) {
+  const [isMobile, setIsMobile] = useState(
+    () => typeof window !== 'undefined' && window.innerWidth <= breakpoint
+  )
+  useEffect(() => {
+    const onResize = () => setIsMobile(window.innerWidth <= breakpoint)
+    window.addEventListener('resize', onResize)
+    return () => window.removeEventListener('resize', onResize)
+  }, [breakpoint])
+  return isMobile
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // CONSTANTS
 // ─────────────────────────────────────────────────────────────────────────────
 const FARM_URLS = {
@@ -63,7 +78,7 @@ const BASE_MAPS = {
   'CartoDB Dark':     { url: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', sub: ['a','b','c','d'], maxZoom: 20 },
 }
 
-// Security-grade color palette — no emojis used as iconsf
+// Security-grade color palette — no emojis used as icons
 const THREAT_RED    = '#e63946'
 const THREAT_AMBER  = '#f4a261'
 const SAFE_GREEN    = '#2ec4b6'
@@ -382,7 +397,6 @@ function MapView({
   lulcVisible, lulcOpacity,
   bufferPoint, bufferRadius, routeOpacity,
   selectedFarm, selectedField, selectedVillage,
-  hotspotFieldIDs, hotspotAllGeoJSON, hotspotOpacity,
   basemap, mapRef, onMapClick, setPopup
 }) {
   // helper: is a layer currently toggled on?
@@ -701,55 +715,6 @@ function MapView({
     })
   }, [lulcVisible, lulcOpacity, activeLayer, activeLayers])
 
-  // ── hotspot field highlights ─────────────────────────────────────────────
-  useEffect(() => {
-    const map = mapObjRef.current; if (!map) return
-    // clear old hotspot layers
-    ;(lyrsRef.current.hotspots || []).forEach(l => map.removeLayer(l))
-    lyrsRef.current.hotspots = []
-    if (!isOn('Hotspot Fields') || !hotspotFieldIDs.size || !hotspotAllGeoJSON.length) return
-
-    const opacity = hotspotOpacity ?? 0.55
-    const layers = []
-
-    hotspotAllGeoJSON.forEach(({ geojson, freq }) => {
-      if (!geojson?.features) return
-      geojson.features.forEach(feat => {
-        const p   = feat.properties || {}
-        const fid = String(p.ID || p.id || '')
-        if (!hotspotFieldIDs.has(fid)) return
-
-        const freqVal  = freq[fid] || 0
-        const max      = Math.max(...Object.values(freq), 1)
-        const ratio    = freqVal / max
-        const fillCol  = ratio > 0.7 ? '#e63946' : ratio > 0.4 ? '#f4a261' : '#f4d35e'
-
-        try {
-          const lyr = L.geoJSON(feat, {
-            style: {
-              color:       '#e63946',
-              weight:      2.5,
-              fillColor:   fillCol,
-              fillOpacity: opacity,
-              opacity:     Math.min(1, opacity + 0.2),
-              dashArray:   null,
-            }
-          }).addTo(map)
-
-          lyr.on('click', () => setPopup({
-            type:  'hotspot',
-            fid,
-            freq:  freqVal,
-            ratio: (ratio * 100).toFixed(0)
-          }))
-          layers.push(lyr)
-        } catch(_) {}
-      })
-    })
-
-    lyrsRef.current.hotspots = layers
-  }, [hotspotFieldIDs, hotspotAllGeoJSON, hotspotOpacity, activeLayer, activeLayers])
-
   // ── buffer ────────────────────────────────────────────────────────────────
   useEffect(() => {
     const map = mapObjRef.current; if (!map) return
@@ -800,6 +765,7 @@ function MapView({
 // COORDINATE SEARCH
 // ─────────────────────────────────────────────────────────────────────────────
 function CoordSearch({ mapRef, showToast }) {
+  const isMobile = useIsMobile()
   const [open, setOpen]     = useState(false)
   const [val, setVal]       = useState('')
   const markerRef           = useRef(null)
@@ -827,8 +793,8 @@ function CoordSearch({ mapRef, showToast }) {
       {open ? (
         <div className="search-wrap fade-up">
           <Icon name="search" size={13} color="rgba(255,255,255,0.4)" />
-          <input className="inp" style={{ width:230, marginBottom:0, fontSize:11 }}
-            placeholder="lat, lon  — e.g. -16.30, 34.91"
+          <input className="inp" style={{ width: isMobile ? 150 : 230, marginBottom:0, fontSize:11 }}
+            placeholder={isMobile ? "lat, lon" : "lat, lon  — e.g. -16.30, 34.91"}
             value={val}
             onChange={e => setVal(e.target.value)}
             onKeyDown={e => e.key === 'Enter' && go()}
@@ -840,7 +806,7 @@ function CoordSearch({ mapRef, showToast }) {
         </div>
       ) : (
         <button className="map-ctrl-btn" onClick={() => setOpen(true)}>
-          <Icon name="search" size={12} color="#5ba4ff" /> &nbsp;Search Coords
+          <Icon name="search" size={12} color="#5ba4ff" /> &nbsp;{isMobile ? '' : 'Search Coords'}
         </button>
       )}
     </div>
@@ -990,11 +956,6 @@ function MapPopup({ popup, onClose }) {
           <span className="map-popup-key">Longitude</span>
           <span className="map-popup-val" style={{ fontFamily:'DM Mono,monospace' }}>{popup.lng}</span>
         </div>
-      </>}
-      {popup.type === 'hotspot' && <>
-        <div className="map-popup-row"><span className="map-popup-key">Field ID</span><span className="map-popup-val" style={{ color:'#e63946' }}>{popup.fid}</span></div>
-        <div className="map-popup-row"><span className="map-popup-key">Frequency</span><span className="map-popup-val" style={{ color:'#f4a261' }}>{popup.freq}</span></div>
-        <div className="map-popup-row"><span className="map-popup-key">Heat</span><span className="map-popup-val">{popup.ratio}%</span></div>
       </>}
     </div>
   )
@@ -1353,79 +1314,18 @@ function BufferPanel({ bufferRadius, setBufferRadius, bufferPoint }) {
   </>)
 }
 
-function HotspotPanel({ hotspotOpacity, setHotspotOpacity, hotspotFieldIDs, allGeoLoaded }) {
-  const [data,       setData]       = useState([])
-  const [loading,    setLoading]    = useState(true)
-  const [showOnMap,  setShowOnMap]  = useState(true)
+function HotspotPanel() {
+  const [data,    setData]    = useState([])
+  const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    fetch(WEEK_CSV).then(r => r.text()).then(t => {
-      setData(parseCSV(t)); setLoading(false)
-    }).catch(() => setLoading(false))
+    fetch(WEEK_CSV).then(r => r.text()).then(t => { setData(parseCSV(t)); setLoading(false) }).catch(() => setLoading(false))
   }, [])
 
   const max    = Math.max(...data.map(d => parseFloat(d.Frequency) || 0), 1)
   const sorted = [...data].sort((a,b) => (parseFloat(b.Frequency)||0) - (parseFloat(a.Frequency)||0))
 
   return (<>
-    {/* ── MAP HIGHLIGHT CARD ── */}
-    <div className="card" style={{ borderColor:`${THREAT_RED}55` }}>
-      <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:8 }}>
-        <div className="card-title" style={{ margin:0 }}>Map Field Highlights</div>
-        <label style={{ display:'flex', alignItems:'center', gap:5, cursor:'pointer' }}>
-          <input type="checkbox" checked={showOnMap} onChange={e => setShowOnMap(e.target.checked)}
-            style={{ accentColor:THREAT_RED, width:13, height:13 }}/>
-          <span style={{ fontSize:9, color:showOnMap ? THREAT_RED : 'rgba(255,255,255,0.3)', fontWeight:600, letterSpacing:0.5 }}>
-            {showOnMap ? 'ON' : 'OFF'}
-          </span>
-        </label>
-      </div>
-
-      {/* Status */}
-      {!allGeoLoaded && (
-        <div style={{ display:'flex', alignItems:'center', gap:6, fontSize:10, color:THREAT_AMBER, marginBottom:8 }}>
-          <span className="spinner" style={{ width:12, height:12, borderWidth:1.5 }}/>
-          Loading farm geometries…
-        </div>
-      )}
-      {allGeoLoaded && (
-        <div style={{ fontSize:10, color:THREAT_RED, marginBottom:8 }}>
-          <strong>{hotspotFieldIDs.size}</strong> hotspot fields highlighted in red on the map
-        </div>
-      )}
-
-      {/* Opacity slider */}
-      <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:4 }}>
-        <span style={{ fontSize:9, color:'rgba(255,255,255,0.4)' }}>Highlight Opacity</span>
-        <span style={{ fontSize:10, fontWeight:600, color:THREAT_RED, fontFamily:'DM Mono,monospace' }}>
-          {Math.round((hotspotOpacity ?? 0.55) * 100)}%
-        </span>
-      </div>
-      <input type="range" min={0.05} max={1} step={0.05}
-        value={hotspotOpacity ?? 0.55}
-        onChange={e => setHotspotOpacity(parseFloat(e.target.value))}
-        style={{ width:'100%', accentColor:THREAT_RED, marginBottom:6 }}
-      />
-      <div style={{ display:'flex', justifyContent:'space-between', fontSize:9, color:'rgba(255,255,255,0.22)' }}>
-        <span>Faint</span><span>Solid</span>
-      </div>
-
-      {/* Colour key */}
-      <div style={{ marginTop:8, display:'flex', gap:8, flexWrap:'wrap' }}>
-        {[
-          { col:'#e63946', label:'High (>70%)' },
-          { col:'#f4a261', label:'Med (40-70%)' },
-          { col:'#f4d35e', label:'Low (<40%)' },
-        ].map(({col,label}) => (
-          <div key={label} style={{ display:'flex', alignItems:'center', gap:4 }}>
-            <div style={{ width:9, height:9, borderRadius:2, background:col, flexShrink:0 }}/>
-            <span style={{ fontSize:9, color:'rgba(255,255,255,0.4)' }}>{label}</span>
-          </div>
-        ))}
-      </div>
-    </div>
-
-    {/* ── CHART ── */}
     <div className="card">
       <div className="card-title">Weekly Hotspot Chart</div>
       {loading
@@ -1449,10 +1349,8 @@ function HotspotPanel({ hotspotOpacity, setHotspotOpacity, hotspotFieldIDs, allG
         )
       }
     </div>
-
-    {/* ── RANKED LIST ── */}
     <div className="card">
-      <div className="card-title">Top Fields by Frequency</div>
+      <div className="card-title">Top Fields by Avg HeadCount</div>
       {sorted.slice(0,8).map((d,i) => {
         const v     = parseFloat(d.Frequency) || 0
         const ratio = v / max
@@ -1469,10 +1367,9 @@ function HotspotPanel({ hotspotOpacity, setHotspotOpacity, hotspotFieldIDs, allG
         )
       })}
     </div>
-
     <div className="card" style={{ borderColor:`${THREAT_RED}33`, background:`${THREAT_RED}08` }}>
       <div style={{ fontSize:10, color:`${THREAT_RED}99`, lineHeight:1.7 }}>
-        Updated weekly — refresh to reload latest data.
+        Updated weekly<br/> refresh to reload.
       </div>
     </div>
   </>)
@@ -1520,6 +1417,9 @@ function RoutesPanel({ routeData, routeOpacity, setRouteOpacity }) {
 // ROOT APP
 // ─────────────────────────────────────────────────────────────────────────────
 export default function App() {
+  const isMobile = useIsMobile()
+  const [mobileSheetOpen, setMobileSheetOpen] = useState(false)   // bottom panel sheet
+  const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false) // layer list drawer
   const [activeLayer,  setActiveLayer]  = useState('Fields')
   const [activeLayers, setActiveLayers] = useState(() => new Set(['Fields']))
   const [farmData,     setFarmData]     = useState([])
@@ -1536,10 +1436,6 @@ export default function App() {
   const [bufferRadius, setBufferRadius] = useState(500)
   const [bufferPoint,  setBufferPoint]  = useState(null)
   const [routeOpacity, setRouteOpacity] = useState(0.92)
-  const [hotspotOpacity,   setHotspotOpacity]   = useState(0.55)
-  const [hotspotFieldIDs,  setHotspotFieldIDs]  = useState(new Set())
-  const [hotspotAllGeoJSON,setHotspotAllGeoJSON] = useState([])
-  const [hotspotGeoLoaded, setHotspotGeoLoaded] = useState(false)
   const [selectedFarm,    setSelectedFarm]    = useState('')
   const [selectedField,   setSelectedField]   = useState('')
   const [selectedVillage, setSelectedVillage] = useState('')
@@ -1565,49 +1461,13 @@ export default function App() {
     setToast(msg); setTimeout(() => setToast(null), 3400)
   }, [])
 
-  // Lazy-load dams, routes when toggled on
+  // Lazy-load dams, routes and activity when toggled on
   useEffect(() => {
     if ((activeLayer === 'Dams-Pumps'   || activeLayers.has('Dams-Pumps'))   && !damData)
       fetch(DAMS_URL).then(r => r.json()).then(setDamData).catch(() => {})
     if ((activeLayer === 'Theft Routes' || activeLayers.has('Theft Routes')) && !routeData)
       fetch(ROUTES_URL).then(r => r.json()).then(setRouteData).catch(() => {})
   }, [activeLayer, activeLayers])
-
-  // Load hotspot field IDs from Week.csv + all farm geometries when Hotspot layer is active
-  useEffect(() => {
-    const isHotActive = activeLayer === 'Hotspot Fields' || activeLayers.has('Hotspot Fields')
-    if (!isHotActive || hotspotGeoLoaded) return
-
-    // 1. Fetch Week.csv to get field IDs
-    fetch(WEEK_CSV)
-      .then(r => r.text())
-      .then(text => {
-        const rows = parseCSV(text)
-        const ids  = new Set(rows.map(r => String(r.Field || '').trim()).filter(Boolean))
-
-        // build freq map: fieldID → frequency value
-        const freqMap = {}
-        rows.forEach(r => { freqMap[String(r.Field||'').trim()] = parseFloat(r.Frequency) || 0 })
-
-        setHotspotFieldIDs(ids)
-
-        // 2. Fetch all 4 farm GeoJSONs to locate those fields
-        return Promise.all(
-          Object.entries(FARM_URLS).map(([name, url]) =>
-            fetch(url)
-              .then(r => r.json())
-              .then(geojson => ({ name, geojson, freq: freqMap }))
-              .catch(() => null)
-          )
-        )
-      })
-      .then(results => {
-        const valid = (results || []).filter(Boolean)
-        setHotspotAllGeoJSON(valid)
-        setHotspotGeoLoaded(true)
-      })
-      .catch(() => {})
-  }, [activeLayer, activeLayers, hotspotGeoLoaded])
 
   // Toggle a layer's map visibility on/off
   const toggleLayerVisibility = (id) => {
@@ -1628,6 +1488,7 @@ export default function App() {
     setActiveLayer(id)
     setActiveLayers(prev => { const next = new Set(prev); next.add(id); return next })
     setPopup(null)
+    if (isMobile) { setMobileDrawerOpen(false); setMobileSheetOpen(true) }
   }
 
   const renderPanel = () => {
@@ -1638,7 +1499,7 @@ export default function App() {
       case 'LULC Maps':    return <LulcPanel lulcVisible={lulcVisible} setLulcVisible={setLulcVisible} lulcOpacity={lulcOpacity} setLulcOpacity={setLulcOpacity}/>
       case 'Dams-Pumps':   return <DamsPanel damData={damData}/>
       case 'Buffer Distance': return <BufferPanel bufferRadius={bufferRadius} setBufferRadius={setBufferRadius} bufferPoint={bufferPoint}/>
-      case 'Hotspot Fields':  return <HotspotPanel hotspotOpacity={hotspotOpacity} setHotspotOpacity={setHotspotOpacity} hotspotFieldIDs={hotspotFieldIDs} allGeoLoaded={hotspotGeoLoaded}/>
+      case 'Hotspot Fields':  return <HotspotPanel/>
       case 'Theft Routes':    return <RoutesPanel routeData={routeData} routeOpacity={routeOpacity} setRouteOpacity={setRouteOpacity}/>
       default: return null
     }
@@ -1721,6 +1582,315 @@ export default function App() {
     )
   }
 
+  // ═══════════════════════════════════════════════════════════════════════
+  // MOBILE LAYOUT — full-screen map, bottom sheet panel, layer drawer
+  // ═══════════════════════════════════════════════════════════════════════
+  if (isMobile) {
+    const activeCfg = LAYERS.find(l => l.id === activeLayer)
+    return (
+      <div style={{ display:'flex', flexDirection:'column', height:'100dvh', overflow:'hidden', position:'relative' }}>
+
+        {/* ── MOBILE TOPBAR ── */}
+        <div style={{
+          height: 54, background:'#060e1c', flexShrink:0,
+          borderBottom:'1px solid rgba(33,118,255,0.18)',
+          display:'flex', alignItems:'center', padding:'0 10px', gap:8,
+          boxShadow:'0 1px 16px rgba(0,0,0,0.5)', zIndex:1200,
+          paddingTop:'env(safe-area-inset-top)'
+        }}>
+          {/* Hamburger / layer drawer toggle */}
+          <button
+            onClick={() => setMobileDrawerOpen(o => !o)}
+            style={{
+              width:36, height:36, flexShrink:0, borderRadius:8,
+              background: mobileDrawerOpen ? 'rgba(33,118,255,0.2)' : 'rgba(255,255,255,0.05)',
+              border:'1px solid rgba(33,118,255,0.25)', display:'flex',
+              alignItems:'center', justifyContent:'center', cursor:'pointer'
+            }}>
+            <svg width={17} height={17} viewBox="0 0 24 24" fill="none" stroke="#5ba4ff" strokeWidth={2} strokeLinecap="round">
+              {mobileDrawerOpen
+                ? <><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></>
+                : <><line x1="4" y1="7" x2="20" y2="7"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="17" x2="20" y2="17"/></>
+              }
+            </svg>
+          </button>
+
+          <div style={{ display:'flex', alignItems:'center', gap:7, minWidth:0, flex:1 }}>
+            <div style={{
+              width:26, height:26, borderRadius:6, flexShrink:0,
+              background:'linear-gradient(135deg,#1a5fc8,#060e1c)',
+              border:'1px solid rgba(33,118,255,0.4)',
+              display:'flex', alignItems:'center', justifyContent:'center'
+            }}>
+              <Icon name="signal" size={13} color="#5ba4ff" />
+            </div>
+            <div style={{ minWidth:0, overflow:'hidden' }}>
+              <div style={{ fontSize:12, fontWeight:600, color:'#fff', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>
+                SpatialData <span style={{ color:'#2176ff' }}>GIS</span>
+              </div>
+              <div style={{ fontSize:7.5, color:'rgba(91,164,255,0.6)', letterSpacing:1.2, whiteSpace:'nowrap' }}>ALUMENDA INTELLIGENCE</div>
+            </div>
+          </div>
+
+          <div style={{ width:6, height:6, borderRadius:'50%', background:'#22c55e', boxShadow:'0 0 6px #22c55e', animation:'pulse 2s infinite', flexShrink:0 }}/>
+
+          <img
+            src="https://hamza-nkhumbwa.github.io/galanwra/wwjdlogo.png"
+            alt="WWJD"
+            style={{ height:26, width:'auto', objectFit:'contain', flexShrink:0,
+                     filter:'drop-shadow(0 0 5px rgba(33,118,255,0.4))' }}
+          />
+        </div>
+
+        {/* ── FULL-SCREEN MAP ── */}
+        <div style={{ flex:1, position:'relative', overflow:'hidden' }}>
+          <MapView
+            activeLayer={activeLayer}
+            farmData={farmData}
+            activityData={activityData}
+            actFilter={actFilter}
+            dnFilter={dnFilter}
+            villageData={villageData}
+            damData={damData}
+            routeData={routeData}
+            lulcVisible={lulcVisible}
+            lulcOpacity={lulcOpacity}
+            bufferPoint={bufferPoint}
+            bufferRadius={bufferRadius}
+            routeOpacity={routeOpacity}
+            activeLayers={activeLayers}
+            selectedFarm={selectedFarm}
+            selectedField={selectedField}
+            selectedVillage={selectedVillage}
+            basemap={basemap}
+            mapRef={mapRef}
+            onMapClick={latlng => {
+              if (activeLayer === 'Buffer Distance') setBufferPoint(latlng)
+            }}
+            setPopup={setPopup}
+          />
+
+          {/* Active layer badges — smaller, top-right */}
+          <div style={{
+            position:'absolute', top:8, right:8, zIndex:850,
+            display:'flex', flexDirection:'column', gap:3, alignItems:'flex-end',
+            maxWidth:'46%'
+          }}>
+            {Array.from(activeLayers).filter(id => id !== 'Transition Statistics').map(id => {
+              const cfg = LAYERS.find(l => l.id === id)
+              const colors = {
+                'Fields':'#2176ff','Activity':'#f4a261','Villages':'#2ec4b6',
+                'LULC Maps':'#7b5ea7','Dams-Pumps':'#00b4d8',
+                'Buffer Distance':'#f4a261','Hotspot Fields':'#e63946',
+                'Theft Routes':'#e63946',
+              }
+              return (
+                <div key={id} style={{
+                  display:'flex', alignItems:'center', gap:4,
+                  background:'rgba(6,14,28,0.9)',
+                  border:`1px solid ${colors[id] || '#2176ff'}44`,
+                  borderRadius:4, padding:'3px 7px',
+                  fontSize:8.5, color: colors[id] || '#5ba4ff',
+                  fontFamily:'DM Mono,monospace',
+                }}>
+                  <div style={{ width:5, height:5, borderRadius:'50%', background: colors[id] || '#2176ff', flexShrink:0 }}/>
+                  {cfg?.abbr || id}
+                  <span style={{ marginLeft:2, opacity:0.5, fontSize:10, lineHeight:1 }}
+                    onClick={() => toggleLayerVisibility(id)}>×</span>
+                </div>
+              )
+            })}
+          </div>
+
+          <CoordSearch mapRef={mapRef} showToast={showToast} />
+          <MapPopup popup={popup} onClose={() => setPopup(null)} />
+          {!mobileSheetOpen && <MapLegend activeLayer={activeLayer} farmData={farmData} lulcVisible={lulcVisible} />}
+          {!mobileSheetOpen && <BasemapSwitcher current={basemap} onChange={setBasemap} />}
+
+          {/* ── EARTH VIDEO — smaller on mobile ── */}
+          <div style={{
+            position:'absolute', bottom: mobileSheetOpen ? -100 : 64, left:10, zIndex:870,
+            width:56, height:56, borderRadius:'50%', overflow:'hidden',
+            border:'2px solid rgba(33,118,255,0.35)',
+            boxShadow:'0 0 14px rgba(33,118,255,0.4)',
+            pointerEvents:'none', transition:'bottom 0.3s ease',
+            animation:'earthGlow 3s ease-in-out infinite alternate'
+          }}>
+            <video
+              src="https://hamza-nkhumbwa.github.io/datasets/earth.mp4"
+              autoPlay muted loop playsInline
+              style={{ width:'100%', height:'100%', objectFit:'cover' }}
+            />
+          </div>
+
+          {/* ── LAYER DRAWER — slides from left ── */}
+          {mobileDrawerOpen && (
+            <>
+              <div
+                onClick={() => setMobileDrawerOpen(false)}
+                style={{ position:'absolute', inset:0, background:'rgba(0,0,0,0.5)', zIndex:1100 }}
+              />
+              <div style={{
+                position:'absolute', top:0, left:0, bottom:0, width:'78%', maxWidth:300,
+                background:'#060e1c', borderRight:'1px solid rgba(33,118,255,0.2)',
+                zIndex:1150, display:'flex', flexDirection:'column',
+                boxShadow:'4px 0 30px rgba(0,0,0,0.5)',
+                animation:'fadeUp 0.2s ease'
+              }}>
+                <div style={{ padding:'14px 16px 10px', borderBottom:'1px solid rgba(33,118,255,0.1)' }}>
+                  <div style={{ fontSize:9, letterSpacing:2.5, color:'rgba(255,255,255,0.3)', textTransform:'uppercase' }}>Map Layers</div>
+                </div>
+                <div style={{ flex:1, overflowY:'auto', paddingTop:4 }}>
+                  {LAYERS.map(({ id, abbr, badge, external }) => {
+                    const isPanelActive = activeLayer === id
+                    const isMapOn       = activeLayers.has(id)
+                    return (
+                      <div key={id} style={{
+                        display:'flex', alignItems:'center',
+                        borderLeft:`3px solid ${isPanelActive ? '#2176ff' : 'transparent'}`,
+                        background: isPanelActive ? 'rgba(33,118,255,0.1)' : 'transparent',
+                      }}>
+                        {!external && (
+                          <button
+                            onClick={e => { e.stopPropagation(); toggleLayerVisibility(id) }}
+                            style={{
+                              background:'none', border:'none', padding:'14px 8px 14px 14px',
+                              color: isMapOn ? '#2176ff' : 'rgba(255,255,255,0.25)',
+                              display:'flex', alignItems:'center'
+                            }}>
+                            <svg width={17} height={17} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={isMapOn?2:1.5} strokeLinecap="round" strokeLinejoin="round">
+                              {isMapOn ? (
+                                <><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></>
+                              ) : (
+                                <><path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/></>
+                              )}
+                            </svg>
+                          </button>
+                        )}
+                        <div
+                          onClick={() => handleLayer(id, external)}
+                          style={{ display:'flex', alignItems:'center', gap:10, flex:1, padding: external ? '14px 16px' : '14px 14px 14px 6px', cursor:'pointer' }}>
+                          <div style={{
+                            width:34, height:18, borderRadius:4, flexShrink:0,
+                            background: isPanelActive ? 'rgba(33,118,255,0.25)' : 'rgba(255,255,255,0.05)',
+                            border:`1px solid ${isPanelActive ? 'rgba(33,118,255,0.5)' : 'rgba(255,255,255,0.08)'}`,
+                            display:'flex', alignItems:'center', justifyContent:'center',
+                            fontSize:8, fontWeight:700, letterSpacing:0.5,
+                            color: isPanelActive ? '#5ba4ff' : 'rgba(255,255,255,0.3)',
+                            fontFamily:'DM Mono,monospace'
+                          }}>{abbr}</div>
+                          <span style={{
+                            fontSize:13, flex:1,
+                            color: isPanelActive ? '#dce8f5' : isMapOn ? 'rgba(255,255,255,0.6)' : 'rgba(255,255,255,0.3)',
+                            fontWeight: isPanelActive ? 500 : 400,
+                          }}>{id}</span>
+                          {badge && isMapOn && <div style={{ width:7, height:7, borderRadius:'50%', background:THREAT_RED, flexShrink:0, animation:'pulse 2s infinite' }}/>}
+                          {external && <span style={{ fontSize:10, color:'rgba(255,255,255,0.2)' }}>&#8599;</span>}
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+                <div style={{ padding:'12px 16px', borderTop:'1px solid rgba(33,118,255,0.08)' }}>
+                  <div style={{ fontSize:9, color:'rgba(255,255,255,0.15)', lineHeight:1.8 }}>
+                    Worldwide Joint Discoverers<br/>
+                    Hamza.N · Illovo Sugar Ltd<br/>
+                    v2.1 · {new Date().getFullYear()}
+                  </div>
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+
+        {/* ── BOTTOM SHEET — active layer panel, swipe/tap to expand ── */}
+        <div style={{
+          position:'absolute', left:0, right:0, bottom:0, zIndex:1000,
+          background:'#060e1c',
+          borderTop:'1px solid rgba(33,118,255,0.2)',
+          borderRadius:'16px 16px 0 0',
+          boxShadow:'0 -8px 30px rgba(0,0,0,0.5)',
+          maxHeight: mobileSheetOpen ? '62dvh' : '0px',
+          transition:'max-height 0.32s cubic-bezier(0.4,0,0.2,1)',
+          overflow:'hidden',
+          display:'flex', flexDirection:'column',
+          paddingBottom:'env(safe-area-inset-bottom)'
+        }}>
+          <div style={{ flex:1, overflowY:'auto', padding:'4px 14px 14px' }}>
+            {renderPanel()}
+          </div>
+        </div>
+
+        {/* ── BOTTOM TAB BAR — always visible, drag handle for sheet ── */}
+        <div style={{
+          flexShrink:0, background:'#060e1c',
+          borderTop:'1px solid rgba(33,118,255,0.18)',
+          zIndex:1050, position:'relative',
+          paddingBottom:'env(safe-area-inset-bottom)'
+        }}>
+          {/* Drag handle / current layer strip — tap to toggle sheet */}
+          <div
+            onClick={() => setMobileSheetOpen(o => !o)}
+            style={{
+              display:'flex', alignItems:'center', justifyContent:'center', gap:8,
+              padding:'8px 14px', cursor:'pointer',
+              borderBottom:'1px solid rgba(33,118,255,0.1)'
+            }}>
+            <div style={{ width:34, height:4, borderRadius:2, background:'rgba(255,255,255,0.2)' }}/>
+            <span style={{ fontSize:10, fontWeight:600, color:'#2176ff', letterSpacing:1, flex:1, textAlign:'center' }}>
+              {activeCfg?.id?.toUpperCase() || 'LAYERS'} {mobileSheetOpen ? '▾' : '▴'}
+            </span>
+          </div>
+
+          {/* Quick-access icons row */}
+          <div style={{ display:'flex', overflowX:'auto', padding:'6px 8px', gap:4 }}>
+            {LAYERS.filter(l => !l.external).map(({ id, abbr }) => {
+              const isPanelActive = activeLayer === id
+              const isMapOn       = activeLayers.has(id)
+              return (
+                <button
+                  key={id}
+                  onClick={() => handleLayer(id)}
+                  style={{
+                    flexShrink:0, display:'flex', flexDirection:'column', alignItems:'center', gap:2,
+                    padding:'6px 10px', borderRadius:8, cursor:'pointer',
+                    background: isPanelActive ? 'rgba(33,118,255,0.18)' : 'transparent',
+                    border:`1px solid ${isPanelActive ? 'rgba(33,118,255,0.4)' : 'transparent'}`,
+                    minWidth:50
+                  }}>
+                  <div style={{
+                    width:24, height:14, borderRadius:3,
+                    background: isPanelActive ? 'rgba(33,118,255,0.3)' : 'rgba(255,255,255,0.06)',
+                    border:`1px solid ${isMapOn ? 'rgba(33,118,255,0.5)' : 'rgba(255,255,255,0.1)'}`,
+                    display:'flex', alignItems:'center', justifyContent:'center',
+                    fontSize:6.5, fontWeight:700, color: isPanelActive ? '#5ba4ff' : 'rgba(255,255,255,0.35)',
+                    fontFamily:'DM Mono,monospace', position:'relative'
+                  }}>
+                    {abbr}
+                    {isMapOn && <div style={{ position:'absolute', top:-2, right:-2, width:5, height:5, borderRadius:'50%', background:'#22c55e' }}/>}
+                  </div>
+                  <span style={{ fontSize:7.5, color: isPanelActive ? '#5ba4ff' : 'rgba(255,255,255,0.4)', whiteSpace:'nowrap' }}>{id.split(' ')[0]}</span>
+                </button>
+              )
+            })}
+          </div>
+        </div>
+
+        {toast && <div className="toast" style={{ bottom: mobileSheetOpen ? '64dvh' : 100 }}>{toast}</div>}
+
+        <style>{`
+          @keyframes earthGlow {
+            from { box-shadow: 0 0 12px rgba(33,118,255,0.35); }
+            to   { box-shadow: 0 0 24px rgba(33,118,255,0.65); }
+          }
+        `}</style>
+      </div>
+    )
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // DESKTOP / TABLET LAYOUT — three-column layout
+  // ═══════════════════════════════════════════════════════════════════════
   return (
     <div style={{ display:'flex', flexDirection:'column', height:'100vh', overflow:'hidden' }}>
 
@@ -1901,9 +2071,6 @@ export default function App() {
             selectedFarm={selectedFarm}
             selectedField={selectedField}
             selectedVillage={selectedVillage}
-            hotspotFieldIDs={hotspotFieldIDs}
-            hotspotAllGeoJSON={hotspotAllGeoJSON}
-            hotspotOpacity={hotspotOpacity}
             basemap={basemap}
             mapRef={mapRef}
             onMapClick={latlng => {
