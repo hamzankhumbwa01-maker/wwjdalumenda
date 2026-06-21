@@ -78,7 +78,7 @@ const BASE_MAPS = {
   'CartoDB Dark':     { url: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', sub: ['a','b','c','d'], maxZoom: 20 },
 }
 
-// Security-grade color palette — no emojis used as icons
+// Security-grade color palette — no emojis used as iconsf
 const THREAT_RED    = '#e63946'
 const THREAT_AMBER  = '#f4a261'
 const SAFE_GREEN    = '#2ec4b6'
@@ -397,6 +397,7 @@ function MapView({
   lulcVisible, lulcOpacity,
   bufferPoint, bufferRadius, routeOpacity,
   selectedFarm, selectedField, selectedVillage,
+  hotspotFieldIDs, hotspotAllGeoJSON, hotspotOpacity,
   basemap, mapRef, onMapClick, setPopup
 }) {
   // helper: is a layer currently toggled on?
@@ -715,6 +716,55 @@ function MapView({
     })
   }, [lulcVisible, lulcOpacity, activeLayer, activeLayers])
 
+  // ── hotspot field highlights ─────────────────────────────────────────────
+  useEffect(() => {
+    const map = mapObjRef.current; if (!map) return
+    // clear old hotspot layers
+    ;(lyrsRef.current.hotspots || []).forEach(l => map.removeLayer(l))
+    lyrsRef.current.hotspots = []
+    if (!isOn('Hotspot Fields') || !hotspotFieldIDs.size || !hotspotAllGeoJSON.length) return
+
+    const opacity = hotspotOpacity ?? 0.55
+    const layers = []
+
+    hotspotAllGeoJSON.forEach(({ geojson, freq }) => {
+      if (!geojson?.features) return
+      geojson.features.forEach(feat => {
+        const p   = feat.properties || {}
+        const fid = String(p.ID || p.id || '')
+        if (!hotspotFieldIDs.has(fid)) return
+
+        const freqVal  = freq[fid] || 0
+        const max      = Math.max(...Object.values(freq), 1)
+        const ratio    = freqVal / max
+        const fillCol  = ratio > 0.7 ? '#e63946' : ratio > 0.4 ? '#f4a261' : '#f4d35e'
+
+        try {
+          const lyr = L.geoJSON(feat, {
+            style: {
+              color:       '#e63946',
+              weight:      2.5,
+              fillColor:   fillCol,
+              fillOpacity: opacity,
+              opacity:     Math.min(1, opacity + 0.2),
+              dashArray:   null,
+            }
+          }).addTo(map)
+
+          lyr.on('click', () => setPopup({
+            type:  'hotspot',
+            fid,
+            freq:  freqVal,
+            ratio: (ratio * 100).toFixed(0)
+          }))
+          layers.push(lyr)
+        } catch(_) {}
+      })
+    })
+
+    lyrsRef.current.hotspots = layers
+  }, [hotspotFieldIDs, hotspotAllGeoJSON, hotspotOpacity, activeLayer, activeLayers])
+
   // ── buffer ────────────────────────────────────────────────────────────────
   useEffect(() => {
     const map = mapObjRef.current; if (!map) return
@@ -956,6 +1006,11 @@ function MapPopup({ popup, onClose }) {
           <span className="map-popup-key">Longitude</span>
           <span className="map-popup-val" style={{ fontFamily:'DM Mono,monospace' }}>{popup.lng}</span>
         </div>
+      </>}
+      {popup.type === 'hotspot' && <>
+        <div className="map-popup-row"><span className="map-popup-key">Field ID</span><span className="map-popup-val" style={{ color:'#e63946' }}>{popup.fid}</span></div>
+        <div className="map-popup-row"><span className="map-popup-key">Frequency</span><span className="map-popup-val" style={{ color:'#f4a261' }}>{popup.freq}</span></div>
+        <div className="map-popup-row"><span className="map-popup-key">Heat</span><span className="map-popup-val">{popup.ratio}%</span></div>
       </>}
     </div>
   )
@@ -1314,18 +1369,79 @@ function BufferPanel({ bufferRadius, setBufferRadius, bufferPoint }) {
   </>)
 }
 
-function HotspotPanel() {
-  const [data,    setData]    = useState([])
-  const [loading, setLoading] = useState(true)
+function HotspotPanel({ hotspotOpacity, setHotspotOpacity, hotspotFieldIDs, allGeoLoaded }) {
+  const [data,       setData]       = useState([])
+  const [loading,    setLoading]    = useState(true)
+  const [showOnMap,  setShowOnMap]  = useState(true)
 
   useEffect(() => {
-    fetch(WEEK_CSV).then(r => r.text()).then(t => { setData(parseCSV(t)); setLoading(false) }).catch(() => setLoading(false))
+    fetch(WEEK_CSV).then(r => r.text()).then(t => {
+      setData(parseCSV(t)); setLoading(false)
+    }).catch(() => setLoading(false))
   }, [])
 
   const max    = Math.max(...data.map(d => parseFloat(d.Frequency) || 0), 1)
   const sorted = [...data].sort((a,b) => (parseFloat(b.Frequency)||0) - (parseFloat(a.Frequency)||0))
 
   return (<>
+    {/* ── MAP HIGHLIGHT CARD ── */}
+    <div className="card" style={{ borderColor:`${THREAT_RED}55` }}>
+      <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:8 }}>
+        <div className="card-title" style={{ margin:0 }}>Map Field Highlights</div>
+        <label style={{ display:'flex', alignItems:'center', gap:5, cursor:'pointer' }}>
+          <input type="checkbox" checked={showOnMap} onChange={e => setShowOnMap(e.target.checked)}
+            style={{ accentColor:THREAT_RED, width:13, height:13 }}/>
+          <span style={{ fontSize:9, color:showOnMap ? THREAT_RED : 'rgba(255,255,255,0.3)', fontWeight:600, letterSpacing:0.5 }}>
+            {showOnMap ? 'ON' : 'OFF'}
+          </span>
+        </label>
+      </div>
+
+      {/* Status */}
+      {!allGeoLoaded && (
+        <div style={{ display:'flex', alignItems:'center', gap:6, fontSize:10, color:THREAT_AMBER, marginBottom:8 }}>
+          <span className="spinner" style={{ width:12, height:12, borderWidth:1.5 }}/>
+          Loading farm geometries…
+        </div>
+      )}
+      {allGeoLoaded && (
+        <div style={{ fontSize:10, color:THREAT_RED, marginBottom:8 }}>
+          <strong>{hotspotFieldIDs.size}</strong> hotspot fields highlighted in red on the map
+        </div>
+      )}
+
+      {/* Opacity slider */}
+      <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:4 }}>
+        <span style={{ fontSize:9, color:'rgba(255,255,255,0.4)' }}>Highlight Opacity</span>
+        <span style={{ fontSize:10, fontWeight:600, color:THREAT_RED, fontFamily:'DM Mono,monospace' }}>
+          {Math.round((hotspotOpacity ?? 0.55) * 100)}%
+        </span>
+      </div>
+      <input type="range" min={0.05} max={1} step={0.05}
+        value={hotspotOpacity ?? 0.55}
+        onChange={e => setHotspotOpacity(parseFloat(e.target.value))}
+        style={{ width:'100%', accentColor:THREAT_RED, marginBottom:6 }}
+      />
+      <div style={{ display:'flex', justifyContent:'space-between', fontSize:9, color:'rgba(255,255,255,0.22)' }}>
+        <span>Faint</span><span>Solid</span>
+      </div>
+
+      {/* Colour key */}
+      <div style={{ marginTop:8, display:'flex', gap:8, flexWrap:'wrap' }}>
+        {[
+          { col:'#e63946', label:'High (>70%)' },
+          { col:'#f4a261', label:'Med (40-70%)' },
+          { col:'#f4d35e', label:'Low (<40%)' },
+        ].map(({col,label}) => (
+          <div key={label} style={{ display:'flex', alignItems:'center', gap:4 }}>
+            <div style={{ width:9, height:9, borderRadius:2, background:col, flexShrink:0 }}/>
+            <span style={{ fontSize:9, color:'rgba(255,255,255,0.4)' }}>{label}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+
+    {/* ── CHART ── */}
     <div className="card">
       <div className="card-title">Weekly Hotspot Chart</div>
       {loading
@@ -1349,8 +1465,10 @@ function HotspotPanel() {
         )
       }
     </div>
+
+    {/* ── RANKED LIST ── */}
     <div className="card">
-      <div className="card-title">Top Fields by Avg HeadCount</div>
+      <div className="card-title">Top Fields by Frequency</div>
       {sorted.slice(0,8).map((d,i) => {
         const v     = parseFloat(d.Frequency) || 0
         const ratio = v / max
@@ -1367,9 +1485,10 @@ function HotspotPanel() {
         )
       })}
     </div>
+
     <div className="card" style={{ borderColor:`${THREAT_RED}33`, background:`${THREAT_RED}08` }}>
       <div style={{ fontSize:10, color:`${THREAT_RED}99`, lineHeight:1.7 }}>
-        Updated weekly<br/> refresh to reload.
+        Updated weekly — refresh to reload latest data.
       </div>
     </div>
   </>)
@@ -1436,6 +1555,10 @@ export default function App() {
   const [bufferRadius, setBufferRadius] = useState(500)
   const [bufferPoint,  setBufferPoint]  = useState(null)
   const [routeOpacity, setRouteOpacity] = useState(0.92)
+  const [hotspotOpacity,   setHotspotOpacity]   = useState(0.55)
+  const [hotspotFieldIDs,  setHotspotFieldIDs]  = useState(new Set())
+  const [hotspotAllGeoJSON,setHotspotAllGeoJSON] = useState([])
+  const [hotspotGeoLoaded, setHotspotGeoLoaded] = useState(false)
   const [selectedFarm,    setSelectedFarm]    = useState('')
   const [selectedField,   setSelectedField]   = useState('')
   const [selectedVillage, setSelectedVillage] = useState('')
@@ -1461,13 +1584,49 @@ export default function App() {
     setToast(msg); setTimeout(() => setToast(null), 3400)
   }, [])
 
-  // Lazy-load dams, routes and activity when toggled on
+  // Lazy-load dams, routes when toggled on
   useEffect(() => {
     if ((activeLayer === 'Dams-Pumps'   || activeLayers.has('Dams-Pumps'))   && !damData)
       fetch(DAMS_URL).then(r => r.json()).then(setDamData).catch(() => {})
     if ((activeLayer === 'Theft Routes' || activeLayers.has('Theft Routes')) && !routeData)
       fetch(ROUTES_URL).then(r => r.json()).then(setRouteData).catch(() => {})
   }, [activeLayer, activeLayers])
+
+  // Load hotspot field IDs from Week.csv + all farm geometries when Hotspot layer is active
+  useEffect(() => {
+    const isHotActive = activeLayer === 'Hotspot Fields' || activeLayers.has('Hotspot Fields')
+    if (!isHotActive || hotspotGeoLoaded) return
+
+    // 1. Fetch Week.csv to get field IDs
+    fetch(WEEK_CSV)
+      .then(r => r.text())
+      .then(text => {
+        const rows = parseCSV(text)
+        const ids  = new Set(rows.map(r => String(r.Field || '').trim()).filter(Boolean))
+
+        // build freq map: fieldID → frequency value
+        const freqMap = {}
+        rows.forEach(r => { freqMap[String(r.Field||'').trim()] = parseFloat(r.Frequency) || 0 })
+
+        setHotspotFieldIDs(ids)
+
+        // 2. Fetch all 4 farm GeoJSONs to locate those fields
+        return Promise.all(
+          Object.entries(FARM_URLS).map(([name, url]) =>
+            fetch(url)
+              .then(r => r.json())
+              .then(geojson => ({ name, geojson, freq: freqMap }))
+              .catch(() => null)
+          )
+        )
+      })
+      .then(results => {
+        const valid = (results || []).filter(Boolean)
+        setHotspotAllGeoJSON(valid)
+        setHotspotGeoLoaded(true)
+      })
+      .catch(() => {})
+  }, [activeLayer, activeLayers, hotspotGeoLoaded])
 
   // Toggle a layer's map visibility on/off
   const toggleLayerVisibility = (id) => {
@@ -1499,7 +1658,7 @@ export default function App() {
       case 'LULC Maps':    return <LulcPanel lulcVisible={lulcVisible} setLulcVisible={setLulcVisible} lulcOpacity={lulcOpacity} setLulcOpacity={setLulcOpacity}/>
       case 'Dams-Pumps':   return <DamsPanel damData={damData}/>
       case 'Buffer Distance': return <BufferPanel bufferRadius={bufferRadius} setBufferRadius={setBufferRadius} bufferPoint={bufferPoint}/>
-      case 'Hotspot Fields':  return <HotspotPanel/>
+      case 'Hotspot Fields':  return <HotspotPanel hotspotOpacity={hotspotOpacity} setHotspotOpacity={setHotspotOpacity} hotspotFieldIDs={hotspotFieldIDs} allGeoLoaded={hotspotGeoLoaded}/>
       case 'Theft Routes':    return <RoutesPanel routeData={routeData} routeOpacity={routeOpacity} setRouteOpacity={setRouteOpacity}/>
       default: return null
     }
@@ -1662,6 +1821,9 @@ export default function App() {
             selectedFarm={selectedFarm}
             selectedField={selectedField}
             selectedVillage={selectedVillage}
+            hotspotFieldIDs={hotspotFieldIDs}
+            hotspotAllGeoJSON={hotspotAllGeoJSON}
+            hotspotOpacity={hotspotOpacity}
             basemap={basemap}
             mapRef={mapRef}
             onMapClick={latlng => {
@@ -2071,6 +2233,9 @@ export default function App() {
             selectedFarm={selectedFarm}
             selectedField={selectedField}
             selectedVillage={selectedVillage}
+            hotspotFieldIDs={hotspotFieldIDs}
+            hotspotAllGeoJSON={hotspotAllGeoJSON}
+            hotspotOpacity={hotspotOpacity}
             basemap={basemap}
             mapRef={mapRef}
             onMapClick={latlng => {
