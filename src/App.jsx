@@ -39,7 +39,7 @@ const BAR_CSV       = 'https://hamza-nkhumbwa.github.io/galanwra/Bargraph.csv'
 const WEEK_CSV      = 'https://hamza-nkhumbwa.github.io/galanwra/Week.csv'
 const VILLAGES_URL  = 'https://hamza-nkhumbwa.github.io/galanwra/Alumendavillages.geojson'
 const DAMS_URL      = 'https://hamza-nkhumbwa.github.io/galanwra/damz.geojson'
-const ROUTES_URL    = 'https://hamza-nkhumbwa.github.io/galanwra/route.geojson'
+const ROUTES_URL    = 'https://hamza-nkhumbwa.github.io/galanwra/routes.geojson'
 
 const LULC_TILES = {
   '2005': 'https://earthengine.googleapis.com/v1/projects/ee-gis-021-20/maps/bc79a77a7f5ad3ea9eddf2e583589073-87c86102bfaaab46b560a9fd8f252ce7/tiles/{z}/{x}/{y}',
