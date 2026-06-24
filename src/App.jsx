@@ -42,9 +42,9 @@ const DAMS_URL      = 'https://hamza-nkhumbwa.github.io/galanwra/damz.geojson'
 const ROUTES_URL    = 'https://hamza-nkhumbwa.github.io/galanwra/routes.geojson'
 
 const LULC_TILES = {
-  '2005': 'https://earthengine.googleapis.com/v1/projects/ee-gis-021-20/maps/bc79a77a7f5ad3ea9eddf2e583589073-87c86102bfaaab46b560a9fd8f252ce7/tiles/{z}/{x}/{y}',
-  '2015': 'https://earthengine.googleapis.com/v1/projects/ee-gis-021-20/maps/dc191c4dd5c74646c729f082068f87c0-02c11939c2b497aabee9eb2ee5640070/tiles/{z}/{x}/{y}',
-  '2025': 'https://earthengine.googleapis.com/v1/projects/ee-gis-021-20/maps/4f4b200fa2f5da6cdab0277a5a823391-60eb3ad7c8aa75c04dff7d27d0e29436/tiles/{z}/{x}/{y}',
+  '2005': 'https://earthengine.googleapis.com/v1/projects/ee-gis-021-20/maps/bc79a77a7f5ad3ea9eddf2e583589073-9bbb1cb7c8c8485d8e77acfd553fa635/tiles/{z}/{x}/{y}',
+  '2015': 'https://earthengine.googleapis.com/v1/projects/ee-gis-021-20/maps/dc191c4dd5c74646c729f082068f87c0-0c5c4c8f2cd0a1a7cf2341fdb0fd5a48/tiles/{z}/{x}/{y}',
+  '2025': 'https://earthengine.googleapis.com/v1/projects/ee-gis-021-20/maps/4f4b200fa2f5da6cdab0277a5a823391-b22e641c4d04c16d23d1e1ff1dc1ccff/tiles/{z}/{x}/{y}',
 }
 const LULC_LEGEND = [
   { color: '#3264d6', label: 'Water'      },
