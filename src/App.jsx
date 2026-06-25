@@ -39,12 +39,12 @@ const BAR_CSV       = 'https://hamza-nkhumbwa.github.io/galanwra/Bargraph.csv'
 const WEEK_CSV      = 'https://hamza-nkhumbwa.github.io/galanwra/Week.csv'
 const VILLAGES_URL  = 'https://hamza-nkhumbwa.github.io/galanwra/Alumendavillages.geojson'
 const DAMS_URL      = 'https://hamza-nkhumbwa.github.io/galanwra/damz.geojson'
-const ROUTES_URL    = 'https://hamza-nkhumbwa.github.io/galanwra/routes.geojson'
+const ROUTES_URL    = 'https://hamza-nkhumbwa.github.io/galanwra/route.geojson'
 
 const LULC_TILES = {
-  '2005': 'https://earthengine.googleapis.com/v1/projects/ee-gis-021-20/maps/bc79a77a7f5ad3ea9eddf2e583589073-9bbb1cb7c8c8485d8e77acfd553fa635/tiles/{z}/{x}/{y}',
-  '2015': 'https://earthengine.googleapis.com/v1/projects/ee-gis-021-20/maps/dc191c4dd5c74646c729f082068f87c0-0c5c4c8f2cd0a1a7cf2341fdb0fd5a48/tiles/{z}/{x}/{y}',
-  '2025': 'https://earthengine.googleapis.com/v1/projects/ee-gis-021-20/maps/4f4b200fa2f5da6cdab0277a5a823391-b22e641c4d04c16d23d1e1ff1dc1ccff/tiles/{z}/{x}/{y}',
+  '2005': 'https://earthengine.googleapis.com/v1/projects/ee-gis-021-20/maps/bc79a77a7f5ad3ea9eddf2e583589073-87c86102bfaaab46b560a9fd8f252ce7/tiles/{z}/{x}/{y}',
+  '2015': 'https://earthengine.googleapis.com/v1/projects/ee-gis-021-20/maps/dc191c4dd5c74646c729f082068f87c0-02c11939c2b497aabee9eb2ee5640070/tiles/{z}/{x}/{y}',
+  '2025': 'https://earthengine.googleapis.com/v1/projects/ee-gis-021-20/maps/4f4b200fa2f5da6cdab0277a5a823391-60eb3ad7c8aa75c04dff7d27d0e29436/tiles/{z}/{x}/{y}',
 }
 const LULC_LEGEND = [
   { color: '#3264d6', label: 'Water'      },
@@ -406,7 +406,7 @@ function MapView({
   const mapObjRef     = useRef(null)
   const baseTileRef   = useRef(null)
   const onMapClickRef = useRef(onMapClick)
-  const lyrsRef       = useRef({ farms:{}, activities:[], villages:[], dams:[], lulc:{}, routes:null, buffer:null, bufPin:null })
+  const lyrsRef       = useRef({ farms:{}, activities:[], villages:[], dams:[], lulc:{}, routes:null, buffer:null, bufPin:null, myLocation:null, myAccuracy:null })
 
   // Keep the click handler ref fresh so the map click listener is never stale
   useEffect(() => { onMapClickRef.current = onMapClick }, [onMapClick])
@@ -436,7 +436,51 @@ function MapView({
     return () => { map.remove(); mapObjRef.current = null }
   }, [])
 
-  // ── basemap ───────────────────────────────────────────────────────────────
+  
+
+  // ── live GPS location ───────────────────────────────────────────────
+  useEffect(() => {
+    const map = mapObjRef.current
+    if (!map || !navigator.geolocation) return
+
+    const watchId = navigator.geolocation.watchPosition(
+      (position) => {
+        const lat = position.coords.latitude
+        const lng = position.coords.longitude
+        const accuracy = position.coords.accuracy
+
+        if (lyrsRef.current.myLocation) map.removeLayer(lyrsRef.current.myLocation)
+        if (lyrsRef.current.myAccuracy) map.removeLayer(lyrsRef.current.myAccuracy)
+
+        const gpsIcon = L.divIcon({
+          html: `<div style="width:14px;height:14px;background:#2196f3;border:3px solid #fff;border-radius:50%;box-shadow:0 0 12px #2196f3"></div>`,
+          iconSize:[14,14],
+          iconAnchor:[7,7],
+          className:''
+        })
+
+        lyrsRef.current.myLocation = L.marker([lat, lng], { icon:gpsIcon }).addTo(map)
+
+        lyrsRef.current.myAccuracy = L.circle([lat, lng], {
+          radius: accuracy,
+          color:'#2196f3',
+          fillColor:'#2196f3',
+          fillOpacity:0.15,
+          weight:1
+        }).addTo(map)
+
+        if (!window.__gpsCentered) {
+          map.setView([lat, lng], 17)
+          window.__gpsCentered = true
+        }
+      },
+      (err) => console.error('GPS Error:', err),
+      { enableHighAccuracy:true, maximumAge:0, timeout:10000 }
+    )
+
+    return () => navigator.geolocation.clearWatch(watchId)
+  }, [])
+// ── basemap ───────────────────────────────────────────────────────────────
   useEffect(() => {
     const map = mapObjRef.current; if (!map) return
     if (baseTileRef.current) map.removeLayer(baseTileRef.current)
