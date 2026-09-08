@@ -25,7 +25,7 @@ const FARM_URLS = {
   'Farm 61': 'https://hamza-nkhumbwa.github.io/galanwra/Farm61.geojson',
   'Farm 62': 'https://hamza-nkhumbwa.github.io/galanwra/Farm62.geojson',
   'Farm 71': 'https://hamza-nkhumbwa.github.io/galanwra/Farm71.geojson',
-  'Farm 72': 'https://hamza-nkhumbwa.github.io/galanwra/Farm72.geojson',
+  'Farm 72': 'https://hamza-nkhumbwa.github.io/galanwra/illovofields.geojson',
 }
 const FARM_COLORS = {
   'Farm 61': '#2176ff',
