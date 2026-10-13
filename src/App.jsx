@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import './App.css'
+import { useAssault, AssaultMapLayer, AssaultPanel, ASSAULT_LAYER_ID } from './AssaultModule'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // RESPONSIVE BREAKPOINT HOOK
@@ -22,15 +23,15 @@ function useIsMobile(breakpoint = 768) {
 // CONSTANTS
 // ─────────────────────────────────────────────────────────────────────────────
 const FARM_URLS = {
-  'Farm 61': 'https://hamza-nkhumbwa.github.io/galanwra/Farm61.geojson',
-  'Farm 62': 'https://hamza-nkhumbwa.github.io/galanwra/Farm62.geojson',
-  'Farm 71': 'https://hamza-nkhumbwa.github.io/galanwra/Farm71.geojson',
+  // 'Farm 61': 'https://hamza-nkhumbwa.github.io/galanwra/Farm61.geojson',
+  // 'Farm 62': 'https://hamza-nkhumbwa.github.io/galanwra/Farm62.geojson',
+  // 'Farm 71': 'https://hamza-nkhumbwa.github.io/galanwra/Farm71.geojson',
   'Farm 72': 'https://hamza-nkhumbwa.github.io/galanwra/illovofields.geojson',
 }
 const FARM_COLORS = {
-  'Farm 61': '#2176ff',
-  'Farm 62': '#00d084',
-  'Farm 71': '#f5a623',
+  // 'Farm 61': '#2176ff',
+  // 'Farm 62': '#00d084',
+  // 'Farm 71': '#f5a623',
   'Farm 72': '#e040fb',
 }
 const ACTIVITY_CSV  = 'https://hamza-nkhumbwa.github.io/galanwra/Activity.csv'
@@ -38,8 +39,8 @@ const PIE_CSV       = 'https://hamza-nkhumbwa.github.io/galanwra/PieChat.csv'
 const BAR_CSV       = 'https://hamza-nkhumbwa.github.io/galanwra/Bargraph.csv'
 const WEEK_CSV      = 'https://hamza-nkhumbwa.github.io/galanwra/Week.csv'
 const VILLAGES_URL  = 'https://hamza-nkhumbwa.github.io/galanwra/Alumendavillages.geojson'
-const DAMS_URL      = 'https://hamza-nkhumbwa.github.io/galanwra/damz.geojson'
-const ROUTES_URL    = 'https://hamza-nkhumbwa.github.io/galanwra/route.geojson'
+const DAMS_URL      = 'https://hamza-nkhumbwa.github.io/galanwra/alldamz.geojson'
+const ROUTES_URL    = 'https://hamza-nkhumbwa.github.io/galanwra/housing.geojson'
 
 const LULC_TILES = {
   '2005': 'https://earthengine.googleapis.com/v1/projects/ee-gis-021-20/maps/bc79a77a7f5ad3ea9eddf2e583589073-87c86102bfaaab46b560a9fd8f252ce7/tiles/{z}/{x}/{y}',
@@ -63,7 +64,7 @@ const LAYERS = [
   { id: 'Fields',               abbr: 'FLD' },
   { id: 'Activity',             abbr: 'ACT', badge: true },
   { id: 'Villages',             abbr: 'VLG' },
-  { id: 'Transition Statistics',abbr: 'TRN', external: true },
+  { id: ASSAULT_LAYER_ID,          abbr: 'ASL', badge: true },
   { id: 'LULC Maps',            abbr: 'LUL' },
   { id: 'Dams-Pumps',           abbr: 'DAM' },
   { id: 'Buffer Distance',      abbr: 'BUF' },
@@ -1612,6 +1613,7 @@ export default function App() {
   const [clock,        setClock]        = useState(() => new Date().toLocaleTimeString())
   const [loading,      setLoading]      = useState(true)
   const mapRef = useRef(null)
+  const assault = useAssault()
 
   // ── Splash / cover-page loading screen ──────────────────────────────────
   useEffect(() => {
@@ -1704,6 +1706,7 @@ export default function App() {
       case 'Buffer Distance': return <BufferPanel bufferRadius={bufferRadius} setBufferRadius={setBufferRadius} bufferPoint={bufferPoint}/>
       case 'Hotspot Fields':  return <HotspotPanel hotspotOpacity={hotspotOpacity} setHotspotOpacity={setHotspotOpacity} hotspotFieldIDs={hotspotFieldIDs} allGeoLoaded={hotspotGeoLoaded}/>
       case 'Theft Routes':    return <RoutesPanel routeData={routeData} routeOpacity={routeOpacity} setRouteOpacity={setRouteOpacity}/>
+      case ASSAULT_LAYER_ID: return <AssaultPanel a={assault} mapRef={mapRef} showToast={showToast}/>
       default: return null
     }
   }
@@ -1888,7 +1891,7 @@ export default function App() {
                 'Fields':'#2176ff','Activity':'#f4a261','Villages':'#2ec4b6',
                 'LULC Maps':'#7b5ea7','Dams-Pumps':'#00b4d8',
                 'Buffer Distance':'#f4a261','Hotspot Fields':'#e63946',
-                'Theft Routes':'#e63946',
+                'Theft Routes':'#e63946', [ASSAULT_LAYER_ID]:'#e63946',
               }
               return (
                 <div key={id} style={{
@@ -1908,6 +1911,7 @@ export default function App() {
             })}
           </div>
 
+          <AssaultMapLayer mapRef={mapRef} active={activeLayers.has(ASSAULT_LAYER_ID)} a={assault} />
           <CoordSearch mapRef={mapRef} showToast={showToast} />
           <MapPopup popup={popup} onClose={() => setPopup(null)} />
           {!mobileSheetOpen && <MapLegend activeLayer={activeLayer} farmData={farmData} lulcVisible={lulcVisible} />}
@@ -2299,7 +2303,7 @@ export default function App() {
                 'Fields':'#2176ff','Activity':'#f4a261','Villages':'#2ec4b6',
                 'LULC Maps':'#7b5ea7','Dams-Pumps':'#00b4d8',
                 'Buffer Distance':'#f4a261','Hotspot Fields':'#e63946',
-                'Theft Routes':'#e63946',
+                'Theft Routes':'#e63946', [ASSAULT_LAYER_ID]:'#e63946',
               }
               return (
                 <div key={id} style={{
@@ -2322,6 +2326,7 @@ export default function App() {
           </div>
 
           {/* Map overlays */}
+          <AssaultMapLayer mapRef={mapRef} active={activeLayers.has(ASSAULT_LAYER_ID)} a={assault} />
           <CoordSearch mapRef={mapRef} showToast={showToast} />
           <MapPopup popup={popup} onClose={() => setPopup(null)} />
           <MapLegend activeLayer={activeLayer} farmData={farmData} lulcVisible={lulcVisible} />
