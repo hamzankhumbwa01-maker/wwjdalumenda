@@ -272,12 +272,56 @@ const Kpi = ({ label, value, color }) => (
 // ─────────────────────────────────────────────────────────────────────────────
 // PANEL
 // ─────────────────────────────────────────────────────────────────────────────
+// ── form styles (explicit, so they never depend on global CSS) ──────────────
+const FIELD = {
+  width: '100%', boxSizing: 'border-box', minHeight: 38, padding: '8px 10px', marginBottom: 10,
+  background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.16)', borderRadius: 6,
+  color: '#dce8f5', fontSize: 13, fontFamily: 'inherit', outline: 'none', colorScheme: 'dark', display: 'block'
+}
+const LABEL = { display: 'block', fontSize: 9.5, letterSpacing: 1, color: 'rgba(255,255,255,0.5)', margin: '0 0 4px', textTransform: 'uppercase' }
+const SUB   = { fontSize: 9.5, letterSpacing: 1.2, color: 'rgba(255,255,255,0.4)', textTransform: 'uppercase', margin: '12px 0 6px' }
+
+const Chevron = ({ open }) => (
+  <svg width={13} height={13} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.4}
+       strokeLinecap="round" strokeLinejoin="round"
+       style={{ transition: 'transform .2s ease', transform: open ? 'rotate(180deg)' : 'rotate(0deg)', flexShrink: 0 }}>
+    <polyline points="6,9 12,15 18,9" />
+  </svg>
+)
+
+// Collapsible section with classic chevron
+function Section({ title, badge, accent = BLUE, open, onToggle, children }) {
+  return (
+    <div className="card" style={{ padding: 0, overflow: 'hidden', borderColor: open ? `${accent}55` : undefined }}>
+      <button type="button" onClick={onToggle} aria-expanded={open}
+        style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 9, padding: '12px 12px', background: 'none',
+                 border: 'none', cursor: 'pointer', color: 'inherit', textAlign: 'left', fontFamily: 'inherit' }}>
+        <span style={{ width: 3, height: 13, borderRadius: 2, background: accent, flexShrink: 0 }} />
+        <span style={{ flex: 1, fontSize: 10, fontWeight: 700, letterSpacing: 1.5, textTransform: 'uppercase', color: open ? '#dce8f5' : 'rgba(255,255,255,0.55)' }}>{title}</span>
+        {badge != null && badge !== '' && (
+          <span style={{ fontSize: 9, fontFamily: 'DM Mono,monospace', padding: '1px 7px', borderRadius: 9, background: `${accent}22`, color: accent }}>{badge}</span>
+        )}
+        <span style={{ color: 'rgba(255,255,255,0.5)', display: 'flex' }}><Chevron open={open} /></span>
+      </button>
+      {open && <div style={{ padding: '0 12px 12px' }}>{children}</div>}
+    </div>
+  )
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PANEL
+// ─────────────────────────────────────────────────────────────────────────────
 export function AssaultPanel({ a, mapRef, showToast }) {
   const { filtered: list, all, loading, filters, setFilters, view, setView, pick, setPick, picking, setPicking, track } = a
   const nowLocal = () => new Date(Date.now() - new Date().getTimezoneOffset() * 6e4).toISOString().slice(0, 16)
   const [form, setForm] = useState({ type: TYPES[0], severity: 'Moderate', victim: VICTIMS[0], weapon: 'None', when: nowLocal(), farm: '', field: '', notes: '' })
   const setF = (k, v) => setForm(f => ({ ...f, [k]: v }))
   const setFilter = (k, v) => setFilters(f => ({ ...f, [k]: v }))
+
+  const [open, setOpen] = useState({ overview: true, tracker: true, filters: false, severity: false, time: false, people: false, zones: false, report: false, saved: false })
+  const tog = k => setOpen(o => ({ ...o, [k]: !o[k] }))
+  const allOpen = Object.values(open).every(Boolean)
+  const setAll = v => setOpen(o => Object.fromEntries(Object.keys(o).map(k => [k, v])))
 
   const S = useMemo(() => {
     const count = (keys, get) => keys.map(k => [k, list.filter(c => get(c) === k).length])
@@ -320,36 +364,42 @@ export function AssaultPanel({ a, mapRef, showToast }) {
     if (!pick) { showToast('Set the incident location first'); return }
     const [Date_, Time] = form.when.split('T')
     a.addReport({ Date: Date_, Time, Latitude: pick.lat.toFixed(6), Longitude: pick.lng.toFixed(6), Type: form.type, Severity: form.severity,
-      Victim: form.victim, Weapon: form.weapon, Farm: form.farm, Field: form.field, Notes: form.notes })
+      Victim: form.victim, Weapon: form.weapon, Farm: form.farm, Field: form.field, Notes: form.notes.trim() })
     setPick(null); setForm(f => ({ ...f, notes: '', when: nowLocal() })); showToast('Incident saved on this device')
   }
 
   const km = m => m >= 1000 ? (m / 1000).toFixed(2) + ' km' : Math.round(m) + ' m'
   const mins = track.start ? Math.max(1, Math.round((Date.now() - track.start) / 60000)) : 0
-  const sel = (k, opts, all_) => (
-    <select className="sel" value={filters[k]} onChange={e => setFilter(k, e.target.value)}>
-      <option value="All">{all_}</option>{opts.map(o => <option key={o}>{o}</option>)}
+  const activeFilters = Object.values(filters).filter(v => v !== 'All').length
+  const fsel = (k, opts, label) => (
+    <select className="as-f" style={FIELD} value={filters[k]} onChange={e => setFilter(k, e.target.value)}>
+      <option value="All">{label}</option>{opts.map(o => <option key={o}>{o}</option>)}
     </select>
   )
+  const opt = arr => arr.map(o => <option key={o}>{o}</option>)
 
   return (<>
-    {/* KPIs */}
-    <div className="card">
-      <div className="card-title">Assault Overview</div>
+    <style>{`.as-f::placeholder{color:rgba(255,255,255,0.32)} .as-f:focus{border-color:#2176ff!important;box-shadow:0 0 0 2px rgba(33,118,255,0.25)}`}</style>
+
+    <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 6 }}>
+      <span className="chip" onClick={() => setAll(!allOpen)}>{allOpen ? 'Collapse all' : 'Expand all'}</span>
+    </div>
+
+    {/* Overview */}
+    <Section title="Assault Overview" accent={RED} open={open.overview} onToggle={() => tog('overview')} badge={list.length}>
       <div style={{ display: 'flex', gap: 6 }}>
         <Kpi label="Cases" value={list.length} color={RED} />
         <Kpi label="Serious+" value={S.serious} color={AMBER} />
         <Kpi label="At night" value={`${S.night}%`} color={VIOLET} />
         <Kpi label="Last 30d" value={S.last30} color={GREEN} />
       </div>
-      <div style={{ fontSize: 9, color: MUTED, marginTop: 6 }}>
+      <div style={{ fontSize: 9, color: MUTED, marginTop: 8 }}>
         {loading ? 'Loading Assault.csv…' : `${all.length} records loaded (${a.local.length} saved on this device)`}
       </div>
-    </div>
+    </Section>
 
     {/* Movement tracker */}
-    <div className="card" style={{ borderColor: track.on ? `${BLUE}88` : undefined }}>
-      <div className="card-title">Movement Tracker</div>
+    <Section title="Movement Tracker" accent={BLUE} open={open.tracker} onToggle={() => tog('tracker')} badge={track.on ? 'LIVE' : ''}>
       <button className={`btn ${track.on ? 'btn-danger' : 'btn-primary'}`} onClick={track.on ? a.stopTrack : a.startTrack}>
         {track.on ? 'Stop tracking' : 'Start tracking'}
       </button>
@@ -370,44 +420,44 @@ export function AssaultPanel({ a, mapRef, showToast }) {
         <span className={`chip${track.follow ? ' on-blue' : ''}`} onClick={() => a.setTrack(t => ({ ...t, follow: !t.follow }))}>Follow me</span>
         <span className="chip" onClick={a.resetTrack}>Clear trail</span>
       </div>
-    </div>
+    </Section>
 
-    {/* Filters + view */}
-    <div className="card">
-      <div className="card-title">Filters</div>
-      {sel('type', TYPES, 'All types')}
-      {sel('severity', Object.keys(SEV), 'All severities')}
-      <select className="sel" value={filters.period} onChange={e => setFilter('period', e.target.value)}>
+    {/* Filters */}
+    <Section title="Filters & Map View" accent={AMBER} open={open.filters} onToggle={() => tog('filters')} badge={activeFilters ? `${activeFilters} active` : ''}>
+      <label style={LABEL}>Type of assault</label>{fsel('type', TYPES, 'All types')}
+      <label style={LABEL}>Severity</label>{fsel('severity', Object.keys(SEV), 'All severities')}
+      <label style={LABEL}>Period</label>
+      <select className="as-f" style={FIELD} value={filters.period} onChange={e => setFilter('period', e.target.value)}>
         <option value="All">All time</option><option value="30d">Last 30 days</option><option value="90d">Last 90 days</option><option value="1y">Last year</option>
       </select>
+      <label style={LABEL}>Time of day</label>
       <div style={{ marginBottom: 6 }}>
         {['All', 'Day', 'Night'].map(t => <span key={t} className={`chip${filters.tod === t ? ' on-blue' : ''}`} onClick={() => setFilter('tod', t)}>{t}</span>)}
       </div>
-      <div style={{ fontSize: 9, color: MUTED, marginBottom: 4 }}>Map view</div>
+      <div style={SUB}>Map view</div>
       {[['points', 'Cases'], ['grid', 'Hotspot zones'], ['both', 'Both']].map(([k, l]) =>
         <span key={k} className={`chip${view === k ? ' on-amber' : ''}`} onClick={() => setView(k)}>{l}</span>)}
-    </div>
+    </Section>
 
     {/* Analysis */}
     {list.length > 0 ? (<>
-      <div className="card">
-        <div className="card-title">Severity</div><Bars rows={S.sev} />
-        <div className="card-title" style={{ marginTop: 10 }}>Type of assault</div><Bars rows={S.types} color={RED} />
-      </div>
-      <div className="card">
-        <div className="card-title">Time of day (violet = night)</div>
+      <Section title="Severity & Type" accent={RED} open={open.severity} onToggle={() => tog('severity')}>
+        <div style={{ ...SUB, marginTop: 0 }}>Severity</div><Bars rows={S.sev} />
+        <div style={SUB}>Type of assault</div><Bars rows={S.types} color={RED} />
+      </Section>
+      <Section title="Time Patterns" accent={VIOLET} open={open.time} onToggle={() => tog('time')}>
+        <div style={{ ...SUB, marginTop: 0 }}>Hour of day (violet = night)</div>
         <Cols vals={S.hours} labels={S.hours.map((_, h) => (h % 3 === 0 ? h : ''))} hi={h => h < 6 || h >= 18} />
-        <div className="card-title" style={{ marginTop: 10 }}>Day of week</div>
+        <div style={SUB}>Day of week</div>
         <Cols vals={S.dow} labels={['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa']} color={AMBER} />
-        <div className="card-title" style={{ marginTop: 10 }}>Last 12 months</div>
+        <div style={SUB}>Last 12 months</div>
         <Cols vals={S.months.map(m => m.n)} labels={S.months.map(m => m.label)} color={GREEN} />
-      </div>
-      <div className="card">
-        <div className="card-title">Who is affected</div><Bars rows={S.victims} color={BLUE} />
-        <div className="card-title" style={{ marginTop: 10 }}>Weapon involved</div><Bars rows={S.weapons} color={VIOLET} />
-      </div>
-      <div className="card">
-        <div className="card-title">Top hotspot zones</div>
+      </Section>
+      <Section title="Victims & Weapons" accent={BLUE} open={open.people} onToggle={() => tog('people')}>
+        <div style={{ ...SUB, marginTop: 0 }}>Who is affected</div><Bars rows={S.victims} color={BLUE} />
+        <div style={SUB}>Weapon involved</div><Bars rows={S.weapons} color={VIOLET} />
+      </Section>
+      <Section title="Top Hotspot Zones" accent={RED} open={open.zones} onToggle={() => tog('zones')} badge={S.cells.length}>
         {S.cells.map((c, i) => (
           <div key={i} className="village-row" onClick={() => mapRef.current?.setView(cellCenter(c), 16)}>
             <span style={{ color: i === 0 ? RED : AMBER, fontFamily: 'DM Mono,monospace', width: 18 }}>{i + 1}</span>
@@ -416,7 +466,7 @@ export function AssaultPanel({ a, mapRef, showToast }) {
           </div>
         ))}
         <div style={{ fontSize: 9, color: MUTED, marginTop: 4 }}>Tap a zone to zoom to it.</div>
-      </div>
+      </Section>
     </>) : (
       <div className="card" style={{ fontSize: 11, color: MUTED, lineHeight: 1.7 }}>
         No cases match yet. Report an incident below, or add an <b>Assault.csv</b> file to your data repository.
@@ -424,45 +474,72 @@ export function AssaultPanel({ a, mapRef, showToast }) {
     )}
 
     {/* Report an incident */}
-    <div className="card" style={{ borderColor: `${RED}44` }}>
-      <div className="card-title">Report an Incident</div>
+    <Section title="Report an Incident" accent={RED} open={open.report} onToggle={() => tog('report')}>
+      <div style={LABEL}>1 · Location</div>
       <div style={{ display: 'flex', gap: 6, marginBottom: 6 }}>
-        <button className="btn btn-ghost" style={{ marginBottom: 0 }} onClick={gps}>Use my GPS</button>
-        <button className={`btn ${picking ? 'btn-primary' : 'btn-ghost'}`} style={{ marginBottom: 0 }} onClick={() => setPicking(p => !p)}>
+        <button type="button" className="btn btn-ghost" style={{ marginBottom: 0, flex: 1 }} onClick={gps}>Use my GPS</button>
+        <button type="button" className={`btn ${picking ? 'btn-primary' : 'btn-ghost'}`} style={{ marginBottom: 0, flex: 1 }} onClick={() => setPicking(p => !p)}>
           {picking ? 'Tap the map…' : 'Pick on map'}
         </button>
       </div>
-      <div style={{ fontSize: 10, marginBottom: 6, color: pick ? GREEN : MUTED, fontFamily: 'DM Mono,monospace' }}>
-        {pick ? `${pick.lat.toFixed(5)}, ${pick.lng.toFixed(5)}` : 'No location set'}
+      <div style={{ fontSize: 10.5, marginBottom: 12, color: pick ? GREEN : MUTED, fontFamily: 'DM Mono,monospace' }}>
+        {picking ? 'Tap the incident spot on the map (on a phone, minimise this panel first).'
+                 : pick ? `${pick.lat.toFixed(5)}, ${pick.lng.toFixed(5)}` : 'No location set yet'}
       </div>
-      <input className="inp" type="datetime-local" value={form.when} onChange={e => setF('when', e.target.value)} />
-      <select className="sel" value={form.type} onChange={e => setF('type', e.target.value)}>{TYPES.map(o => <option key={o}>{o}</option>)}</select>
-      <select className="sel" value={form.severity} onChange={e => setF('severity', e.target.value)}>{Object.keys(SEV).map(o => <option key={o}>{o}</option>)}</select>
-      <select className="sel" value={form.victim} onChange={e => setF('victim', e.target.value)}>{VICTIMS.map(o => <option key={o}>{o}</option>)}</select>
-      <select className="sel" value={form.weapon} onChange={e => setF('weapon', e.target.value)}>{WEAPONS.map(o => <option key={o}>{o}</option>)}</select>
-      <div style={{ display: 'flex', gap: 6 }}>
-        <input className="inp" placeholder="Farm" value={form.farm} onChange={e => setF('farm', e.target.value)} />
-        <input className="inp" placeholder="Field" value={form.field} onChange={e => setF('field', e.target.value)} />
+
+      <div style={LABEL}>2 · Details</div>
+      <label style={LABEL}>Date & time</label>
+      <input className="as-f" style={FIELD} type="datetime-local" value={form.when} onChange={e => setF('when', e.target.value)} />
+      <label style={LABEL}>Type of assault</label>
+      <select className="as-f" style={FIELD} value={form.type} onChange={e => setF('type', e.target.value)}>{opt(TYPES)}</select>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+        <div><label style={LABEL}>Severity</label>
+          <select className="as-f" style={FIELD} value={form.severity} onChange={e => setF('severity', e.target.value)}>{opt(Object.keys(SEV))}</select></div>
+        <div><label style={LABEL}>Weapon</label>
+          <select className="as-f" style={FIELD} value={form.weapon} onChange={e => setF('weapon', e.target.value)}>{opt(WEAPONS)}</select></div>
       </div>
-      <input className="inp" placeholder="Short note (no victim names)" value={form.notes} onChange={e => setF('notes', e.target.value)} />
-      <button className="btn btn-confirm" onClick={save}>Save incident</button>
-    </div>
+      <label style={LABEL}>Victim category</label>
+      <select className="as-f" style={FIELD} value={form.victim} onChange={e => setF('victim', e.target.value)}>{opt(VICTIMS)}</select>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+        <div><label style={LABEL}>Farm</label>
+          <input className="as-f" style={FIELD} placeholder="e.g. Farm 72" value={form.farm} onChange={e => setF('farm', e.target.value)} /></div>
+        <div><label style={LABEL}>Field</label>
+          <input className="as-f" style={FIELD} placeholder="e.g. 72-014" value={form.field} onChange={e => setF('field', e.target.value)} /></div>
+      </div>
+
+      <div style={LABEL}>3 · Short note <span style={{ textTransform: 'none', letterSpacing: 0, color: 'rgba(255,255,255,0.3)' }}>(no victim names)</span></div>
+      <textarea className="as-f" style={{ ...FIELD, minHeight: 74, resize: 'vertical', marginBottom: 4 }} rows={3} maxLength={200}
+        placeholder="What happened, in a sentence or two…" value={form.notes} onChange={e => setF('notes', e.target.value)} />
+      <div style={{ textAlign: 'right', fontSize: 9, color: MUTED, marginBottom: 6 }}>{form.notes.length}/200</div>
+
+      {/* sticky save bar: stays visible while scrolling through the form */}
+      <div style={{ position: 'sticky', bottom: 0, margin: '0 -12px -12px', padding: '10px 12px 12px', background: '#0a1426', borderTop: '1px solid rgba(255,255,255,0.08)' }}>
+        {!pick && <div style={{ fontSize: 10, color: AMBER, marginBottom: 6, textAlign: 'center' }}>Set a location (step 1) to enable saving</div>}
+        <button type="button" onClick={save} disabled={!pick}
+          style={{ width: '100%', height: 44, borderRadius: 8, border: 'none', cursor: pick ? 'pointer' : 'not-allowed', fontSize: 13, fontWeight: 700,
+                   letterSpacing: 0.5, fontFamily: 'inherit', color: '#fff', opacity: pick ? 1 : 0.45,
+                   background: `linear-gradient(135deg, ${RED}, #b3202c)`, boxShadow: pick ? `0 0 14px ${RED}55` : 'none' }}>
+          Save incident
+        </button>
+      </div>
+    </Section>
 
     {/* Local data */}
     {a.local.length > 0 && (
-      <div className="card">
-        <div className="card-title">Saved on this device ({a.local.length})</div>
-        <div style={{ maxHeight: 130, overflowY: 'auto', marginBottom: 6 }}>
+      <Section title="Saved on this device" accent={GREEN} open={open.saved} onToggle={() => tog('saved')} badge={a.local.length}>
+        <div style={{ maxHeight: 140, overflowY: 'auto', marginBottom: 8 }}>
           {a.local.map(r => (
             <div key={r.ID} className="village-row">
               <span style={{ flex: 1, fontSize: 10 }}>{r.Date} · {r.Type}</span>
-              <span style={{ color: RED, cursor: 'pointer', fontSize: 12 }} onClick={() => a.removeReport(r.ID)}>×</span>
+              <span style={{ color: RED, cursor: 'pointer', fontSize: 16, padding: '0 6px' }} onClick={() => a.removeReport(r.ID)}>×</span>
             </div>
           ))}
         </div>
         <button className="btn btn-primary" onClick={() => exportCSV(a.local)}>Export as CSV</button>
         <div style={{ fontSize: 9, color: MUTED }}>Reports live in this browser only. Export, then merge into Assault.csv to share across devices.</div>
-      </div>
+      </Section>
     )}
+
+    <div style={{ height: 90 }} />
   </>)
 }
