@@ -1671,6 +1671,30 @@ export default function App() {
   const mapRef = useRef(null)
   const assault = useAssault()
 
+  // ── resizable right panel (desktop): drag edge, double-click to maximise ──
+  const [panelW,   setPanelW]   = useState(() => { try { return Math.min(Math.max(Number(localStorage.getItem('alumenda_panel_w')) || 272, 240), 1400) } catch { return 272 } })
+  const [panelMax, setPanelMax] = useState(false)
+  const panelWRef = useRef(panelW)
+  useEffect(() => {
+    const t = setTimeout(() => mapRef.current?.invalidateSize(), 60)   // keep Leaflet in sync with its new size
+    return () => clearTimeout(t)
+  }, [panelW, panelMax])
+  const startPanelResize = (e) => {
+    e.preventDefault()
+    const el = e.currentTarget, startX = e.clientX, startW = panelWRef.current
+    el.setPointerCapture?.(e.pointerId)
+    const move = ev => {
+      const w = Math.round(Math.min(Math.max(startW + (startX - ev.clientX), 240), window.innerWidth - 212 - 80))
+      panelWRef.current = w; setPanelW(w)
+    }
+    const up = () => {
+      el.removeEventListener('pointermove', move); el.removeEventListener('pointerup', up); el.removeEventListener('pointercancel', up)
+      try { localStorage.setItem('alumenda_panel_w', String(panelWRef.current)) } catch {}
+    }
+    el.addEventListener('pointermove', move); el.addEventListener('pointerup', up); el.addEventListener('pointercancel', up)
+  }
+  const panelWide = panelMax || panelW >= 640
+
   // ── Splash / cover-page loading screen ──────────────────────────────────
   useEffect(() => {
     const t = setTimeout(() => setLoading(false), 2200)
@@ -2321,7 +2345,7 @@ export default function App() {
         </div>
 
         {/* MAP */}
-        <div style={{ flex:1, position:'relative', overflow:'hidden' }}>
+        <div style={{ flex:1, minWidth:0, position:'relative', overflow:'hidden' }}>
           <MapView
             activeLayer={activeLayer}
             farmData={farmData}
@@ -2395,24 +2419,51 @@ export default function App() {
           <div id="coord-bar" className="coord-bar">Move cursor over map</div>
         </div>
 
-        {/* RIGHT PANEL */}
+        {/* RIGHT PANEL — drag the left edge to resize, double-click or use the button to maximise */}
         <div style={{
-          width: 272, background:'#060e1c', flexShrink:0,
+          position:'relative', flexShrink:0, background:'#060e1c',
+          width: panelMax ? 'calc(100vw - 212px)' : panelW,
+          maxWidth: panelMax ? undefined : 'calc(100vw - 292px)',
           borderLeft:'1px solid rgba(33,118,255,0.12)',
           display:'flex', flexDirection:'column', overflow:'hidden'
         }}>
+          {!panelMax && (
+            <div onPointerDown={startPanelResize} onDoubleClick={() => setPanelMax(true)}
+              title="Drag to resize · double-click to maximise"
+              style={{ position:'absolute', left:0, top:0, bottom:0, width:12, cursor:'col-resize', zIndex:5,
+                       touchAction:'none', display:'flex', alignItems:'center', justifyContent:'center' }}>
+              <div style={{ width:3, height:44, borderRadius:2, background:'rgba(91,164,255,0.5)' }}/>
+            </div>
+          )}
           <div style={{
             padding:'10px 13px 8px',
             borderBottom:'1px solid rgba(33,118,255,0.1)',
             display:'flex', alignItems:'center', gap:8
           }}>
             <Icon name={LAYERS.find(l=>l.id===activeLayer)?.abbr?.toLowerCase() || 'map'} size={14} color="#2176ff" />
-            <span style={{ fontSize:10, fontWeight:600, color:'#2176ff', letterSpacing:1.5 }}>
+            <span style={{ fontSize:10, fontWeight:600, color:'#2176ff', letterSpacing:1.5, flex:1 }}>
               {activeLayer.toUpperCase()}
             </span>
+            {!panelMax && panelW !== 272 && (
+              <button onClick={() => { setPanelW(272); panelWRef.current = 272; try { localStorage.removeItem('alumenda_panel_w') } catch {} }}
+                title="Reset width" style={{ background:'none', border:'1px solid rgba(255,255,255,0.12)', borderRadius:4, cursor:'pointer', padding:'2px 7px', fontSize:9, color:'rgba(255,255,255,0.5)' }}>
+                Reset
+              </button>
+            )}
+            <button onClick={() => setPanelMax(m => !m)} title={panelMax ? 'Restore panel' : 'Maximise panel'}
+              style={{ background:'none', border:'1px solid rgba(33,118,255,0.35)', borderRadius:4, cursor:'pointer', padding:'3px 6px', lineHeight:0, color:'#5ba4ff' }}>
+              <svg width={13} height={13} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round">
+                {panelMax
+                  ? <><polyline points="9,3 9,9 3,9"/><polyline points="15,21 15,15 21,15"/></>
+                  : <><polyline points="15,3 21,3 21,9"/><polyline points="9,21 3,21 3,15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></>}
+              </svg>
+            </button>
           </div>
           <div style={{ flex:1, overflowY:'auto', padding:10 }}>
-            {renderPanel()}
+            <div className={panelWide ? 'panel-cols' : undefined}
+                 style={panelWide ? { columnWidth:320, columnGap:12 } : undefined}>
+              {renderPanel()}
+            </div>
           </div>
         </div>
       </div>
@@ -2437,6 +2488,7 @@ export default function App() {
       </div>
 
       <style>{`
+        .panel-cols > * { break-inside: avoid; }
         @keyframes earthGlow {
           from { box-shadow: 0 0 12px rgba(33,118,255,0.35), 0 0 5px rgba(0,0,0,0.8); }
           to   { box-shadow: 0 0 28px rgba(33,118,255,0.7), 0 0 10px rgba(0,180,216,0.4); }
