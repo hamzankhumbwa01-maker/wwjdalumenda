@@ -3,7 +3,7 @@ import L from 'leaflet'
 import { supabase } from './supabaseClient'
 
 // ─────────────────────────────────────────────────────────────────────────────
-// CONFIG
+// CONFIGure
 // ─────────────────────────────────────────────────────────────────────────────
 export const ASSAULT_LAYER_ID = 'Assault Cases'
 const LS_CACHE  = 'alumenda_assault_cache_v2'     // last copy of the database (for offline viewing)
