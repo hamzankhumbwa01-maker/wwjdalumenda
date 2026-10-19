@@ -6,7 +6,7 @@ import { useAssault, AssaultMapLayer, AssaultPanel, ASSAULT_LAYER_ID } from './A
 import { useAuth, LoginScreen } from './AuthGate'
 
 // ─────────────────────────────────────────────────────────────────────────────
-// RESPONSIVE BREAKPOINT HOOK
+// RESPONSIVE BREAKPOINT HOOKs
 // ─────────────────────────────────────────────────────────────────────────────
 function useIsMobile(breakpoint = 768) {
   const [isMobile, setIsMobile] = useState(
