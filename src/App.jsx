@@ -3,6 +3,7 @@ import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import './App.css'
 import { useAssault, AssaultMapLayer, AssaultPanel, ASSAULT_LAYER_ID } from './AssaultModule'
+import { useAuth, LoginScreen } from './AuthGate'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // RESPONSIVE BREAKPOINT HOOK
@@ -1578,61 +1579,6 @@ function RoutesPanel({ routeData, routeOpacity, setRouteOpacity }) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// PASSWORD GATE  (SHA-256 hash compare — the password itself is not stored in code)
-// NOTE: this is a front-end lock only, not server-side security.
-// ─────────────────────────────────────────────────────────────────────────────
-const AUTH_SALT = 'alumenda-gis:'
-const AUTH_HASH = '18659165ef97cc7a6921e6c4025bab27944b5b9eb31c2988fcdd1ea8cef0a83d'
-async function sha256Hex(text) {
-  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text))
-  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('')
-}
-
-function LoginGate({ onUnlock }) {
-  const [pwd,   setPwd]   = useState('')
-  const [err,   setErr]   = useState('')
-  const [busy,  setBusy]  = useState(false)
-  const [fails, setFails] = useState(0)
-
-  const submit = async () => {
-    if (busy || !pwd) return
-    setBusy(true); setErr('')
-    let ok = false
-    try { ok = (await sha256Hex(AUTH_SALT + pwd)) === AUTH_HASH }
-    catch { setErr('Secure connection (https) required.'); setBusy(false); return }
-    if (ok) {
-      try { sessionStorage.setItem('alumenda_auth', '1') } catch {}
-      onUnlock()
-    } else {
-      const n = fails + 1
-      setFails(n); setPwd(''); setErr('Incorrect password')
-      await new Promise(r => setTimeout(r, Math.min(n, 5) * 800))   // slow down repeated guesses
-      setBusy(false)
-    }
-  }
-
-  return (
-    <div style={{ position:'fixed', inset:0, zIndex:9999, display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', gap:18, background:'#060e1c', padding:20 }}>
-      <div style={{ width:96, height:96, borderRadius:'50%', display:'flex', alignItems:'center', justifyContent:'center', border:'1px solid rgba(33,118,255,0.35)', background:'rgba(255,255,255,0.03)', boxShadow:'0 0 30px rgba(33,118,255,0.25)' }}>
-        <img src="https://hamza-nkhumbwa.github.io/galanwra/wwjdlogo.png" alt="WWJD" onError={e => { e.target.style.display='none' }} style={{ width:66, height:66, objectFit:'contain' }} />
-      </div>
-      <div style={{ textAlign:'center' }}>
-        <div style={{ fontSize:16, fontWeight:600, color:'#fff' }}>SpatialData <span style={{ color:'#2176ff' }}>GIS</span></div>
-        <div style={{ fontSize:10, color:'rgba(91,164,255,0.6)', letterSpacing:3, marginTop:4 }}>ALUMENDA INTELLIGENCE</div>
-      </div>
-      <div style={{ width:'100%', maxWidth:300, display:'flex', flexDirection:'column', gap:8 }}>
-        <div style={{ fontSize:10, color:'rgba(255,255,255,0.35)', letterSpacing:1.5, textAlign:'center' }}>AUTHORISED ACCESS ONLY</div>
-        <input className={`inp${err ? ' error' : ''}`} type="password" placeholder="Enter password…" value={pwd} autoFocus
-          onChange={e => { setPwd(e.target.value); setErr('') }} onKeyDown={e => e.key === 'Enter' && submit()} />
-        {err && <div style={{ fontSize:11, color:'#e63946', textAlign:'center' }}>{err}</div>}
-        <button className="btn btn-primary" disabled={busy} onClick={submit}>{busy ? 'Checking…' : 'Unlock'}</button>
-      </div>
-      <div style={{ fontSize:9, color:'rgba(255,255,255,0.18)', letterSpacing:1 }}>Hamza.N-Worldwide Joint Discoverers @2026 · Illovo Sugar Ltd</div>
-    </div>
-  )
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
 // ROOT APP
 // ─────────────────────────────────────────────────────────────────────────────
 export default function App() {
@@ -1667,9 +1613,9 @@ export default function App() {
   const [toast,        setToast]        = useState(null)
   const [clock,        setClock]        = useState(() => new Date().toLocaleTimeString())
   const [loading,      setLoading]      = useState(true)
-  const [unlocked,     setUnlocked]     = useState(() => { try { return sessionStorage.getItem('alumenda_auth') === '1' } catch { return false } })
   const mapRef = useRef(null)
-  const assault = useAssault()
+  const auth = useAuth()
+  const assault = useAssault(auth)
 
   // ── resizable right panel (desktop): drag edge, double-click to maximise ──
   const [panelW,   setPanelW]   = useState(() => { try { return Math.min(Math.max(Number(localStorage.getItem('alumenda_panel_w')) || 272, 240), 1400) } catch { return 272 } })
@@ -1791,8 +1737,9 @@ export default function App() {
     }
   }
 
-  // ── Password gate (all hooks are declared above this line) ─────────────
-  if (!unlocked) return <LoginGate onUnlock={() => setUnlocked(true)} />
+  // ── Login gate (all hooks are declared above this line) ────────────────
+  if (!auth.ready) return <div style={{ position:'fixed', inset:0, background:'#060e1c' }} />
+  if (!auth.session) return <LoginScreen />
 
   // ── Splash / cover-page ────────────────────────────────────────────────
   if (loading) {
@@ -2090,6 +2037,9 @@ export default function App() {
                     Hamza.N · Illovo Sugar Ltd<br/>
                     v2.1 · {new Date().getFullYear()}
                   </div>
+                  <button onClick={auth.signOut} style={{ marginTop:10, width:'100%', height:36, borderRadius:6, background:'none', border:'1px solid rgba(255,255,255,0.15)', color:'rgba(255,255,255,0.6)', fontSize:12, cursor:'pointer' }}>
+                    Sign out ({auth.role})
+                  </button>
                 </div>
               </div>
             </>
@@ -2228,7 +2178,8 @@ export default function App() {
           <div style={{ width:1, height:16, background:'rgba(255,255,255,0.07)' }}/>
           <span style={{ fontSize:11, color:'rgba(255,255,255,0.2)', fontFamily:'DM Mono,monospace' }}>{clock}</span>
           <div style={{ width:1, height:16, background:'rgba(255,255,255,0.07)' }}/>
-          <span style={{ fontSize:10, color:'rgba(255,255,255,0.18)' }}>Worldwide Joint Discoverers</span>
+          <span style={{ fontSize:10, color:'rgba(255,255,255,0.3)' }} title={auth.user?.email}>{auth.role === 'manager' ? 'Manager' : 'Guard'}</span>
+          <button onClick={auth.signOut} style={{ background:'none', border:'1px solid rgba(255,255,255,0.15)', borderRadius:4, cursor:'pointer', padding:'3px 9px', fontSize:10, color:'rgba(255,255,255,0.55)' }}>Sign out</button>
           <div style={{ width:1, height:16, background:'rgba(255,255,255,0.07)' }}/>
           {/* WWJD Logo */}
           <img
