@@ -1,12 +1,15 @@
-import { useState, useEffect, useRef, useMemo } from 'react'
+import { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import L from 'leaflet'
+import { supabase } from './supabaseClient'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // CONFIG
 // ─────────────────────────────────────────────────────────────────────────────
 export const ASSAULT_LAYER_ID = 'Assault Cases'
-const ASSAULT_CSV = 'https://hamza-nkhumbwa.github.io/galanwra/Assault.csv'
-const LS_KEY      = 'alumenda_assault_reports_v1'
+const LS_CACHE  = 'alumenda_assault_cache_v2'     // last copy of the database (for offline viewing)
+const LS_OUTBOX = 'alumenda_assault_outbox_v2'    // reports waiting to upload
+const COLS = 'id,client_id,occurred_at,latitude,longitude,type,severity,victim,weapon,farm,field,notes,source'
+const TZ = 'Africa/Blantyre'
 
 const TYPES   = ['Physical assault', 'Armed assault', 'Robbery with violence', 'Sexual assault', 'Threat / intimidation', 'Other']
 const VICTIMS = ['Security guard', 'Employee', 'Cane cutter', 'Driver', 'Community member', 'Other']
@@ -20,35 +23,24 @@ const MUTED = 'rgba(255,255,255,0.4)'
 // ─────────────────────────────────────────────────────────────────────────────
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]))
 
-function splitLine(l) {
-  const out = []; let cur = '', q = false
-  for (const ch of l) {
-    if (ch === '"') q = !q
-    else if (ch === ',' && !q) { out.push(cur); cur = '' }
-    else cur += ch
-  }
-  out.push(cur); return out.map(s => s.trim())
-}
-function parseCSV(text) {
-  const ls = text.trim().split(/\r?\n/).filter(Boolean)
-  if (ls.length < 2) return []
-  const h = splitLine(ls[0])
-  return ls.slice(1).map(l => { const v = splitLine(l); return Object.fromEntries(h.map((k, i) => [k, v[i] ?? ''])) })
-}
+const hourIn = d => Number(new Intl.DateTimeFormat('en-GB', { hour: '2-digit', hourCycle: 'h23', timeZone: TZ }).format(d)) % 24
 
-function normalize(r, i, local = false) {
-  const lat = parseFloat(r.Latitude), lng = parseFloat(r.Longitude)
+function fromDb(r, pending = false) {
+  const lat = Number(r.latitude), lng = Number(r.longitude)
   if (!isFinite(lat) || !isFinite(lng)) return null
-  const d = new Date(`${r.Date}T${(r.Time || '00:00').slice(0, 5)}`)
-  const ok = !isNaN(d)
+  const d = new Date(r.occurred_at), ok = !isNaN(d)
   return {
-    id: r.ID || `${local ? 'L' : 'R'}${i + 1}`, lat, lng,
-    date: ok ? d : null, hour: ok ? d.getHours() : null,
-    type: r.Type || 'Other', severity: SEV[r.Severity] ? r.Severity : 'Moderate',
-    victim: r.Victim || 'Other', weapon: r.Weapon || 'None',
-    farm: r.Farm || '', field: r.Field || '', notes: r.Notes || '', local
+    id: r.client_id || String(r.id), ref: r.id ? 'A' + String(r.id).padStart(5, '0') : 'new',
+    lat, lng, date: ok ? d : null, hour: ok ? hourIn(d) : null,
+    type: r.type || 'Other', severity: SEV[r.severity] ? r.severity : 'Moderate',
+    victim: r.victim || 'Other', weapon: r.weapon || 'None',
+    farm: r.farm || '', field: r.field || '', notes: r.notes || '', pending
   }
 }
+const readLS  = (k, d) => { try { return JSON.parse(localStorage.getItem(k) || 'null') ?? d } catch { return d } }
+const writeLS = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)) } catch {} }
+const newId   = () => (crypto.randomUUID ? crypto.randomUUID() : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => { const r = Math.random() * 16 | 0; return (c === 'x' ? r : (r & 3) | 8).toString(16) }))
+const retryable = e => !e.code || e.code === 'PGRST301' || e.code === 'PGRST303'   // network / expired login → queue and retry
 
 const isNight = h => h !== null && (h < 6 || h >= 18)
 
@@ -71,39 +63,94 @@ function gridCells(list) {
 const cellBounds = c => [[c.i * CELL, c.j * CELL], [(c.i + 1) * CELL, (c.j + 1) * CELL]]
 const cellCenter = c => [(c.i + 0.5) * CELL, (c.j + 0.5) * CELL]
 
-function exportCSV(rows) {
+function exportCSV(rows, name = 'Assault_reports.csv') {
   const H = ['ID', 'Date', 'Time', 'Latitude', 'Longitude', 'Type', 'Severity', 'Victim', 'Weapon', 'Farm', 'Field', 'Notes']
   const q = v => `"${String(v ?? '').replace(/"/g, '""')}"`
   const t = [H.join(','), ...rows.map(r => H.map(h => q(r[h])).join(','))].join('\n')
   const a = document.createElement('a')
   a.href = URL.createObjectURL(new Blob([t], { type: 'text/csv' }))
-  a.download = 'Assault_reports.csv'; a.click()
+  a.download = name; a.click()
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // STATE HOOK — call once in App (before any early return)
 // ─────────────────────────────────────────────────────────────────────────────
-export function useAssault() {
-  const [remote, setRemote]   = useState([])
-  const [local, setLocal]     = useState(() => { try { return JSON.parse(localStorage.getItem(LS_KEY) || '[]') } catch { return [] } })
-  const [loading, setLoading] = useState(true)
+export function useAssault(auth) {
+  const userId = auth?.user?.id || null
+  const [rows, setRows]       = useState(() => readLS(LS_CACHE, {}).rows || [])
+  const [outbox, setOutbox]   = useState(() => readLS(LS_OUTBOX, []))
+  const [sync, setSync]       = useState({ loading: false, error: '', at: readLS(LS_CACHE, {}).at || null })
   const [filters, setFilters] = useState({ type: 'All', severity: 'All', period: 'All', tod: 'All' })
   const [view, setView]       = useState('both')       // points | grid | both
   const [pick, setPick]       = useState(null)         // {lat,lng} for new report
   const [picking, setPicking] = useState(false)
   const [track, setTrack]     = useState({ on: false, pos: null, trail: [], dist: 0, follow: true, start: null, err: '' })
-  const watch = useRef(null), lock = useRef(null)
+  const watch = useRef(null), lock = useRef(null), flushing = useRef(false), timer = useRef(null)
+
+  // ── database: read everything (paged), keep a copy for offline ───────────
+  const reload = useCallback(async () => {
+    if (!userId) return
+    setSync(s => ({ ...s, loading: true }))
+    try {
+      let all = [], from = 0
+      for (;;) {
+        const { data, error } = await supabase.from('assault_incidents').select(COLS)
+          .order('occurred_at', { ascending: false }).order('id').range(from, from + 999)
+        if (error) throw error
+        all = all.concat(data)
+        if (data.length < 1000 || all.length >= 20000) break
+        from += 1000
+      }
+      const at = Date.now()
+      setRows(all); writeLS(LS_CACHE, { rows: all, at })
+      setSync({ loading: false, error: '', at })
+    } catch {
+      setSync(s => ({ ...s, loading: false, error: 'Offline — showing the last saved copy' }))
+    }
+  }, [userId])
+
+  // ── database: upload reports that were saved while offline ──────────────
+  const flush = useCallback(async () => {
+    if (!userId || flushing.current) return 0
+    const mine = readLS(LS_OUTBOX, []).filter(q => q.reported_by === userId)
+    if (!mine.length) return 0
+    flushing.current = true
+    const done = new Set(), failed = {}
+    for (const item of mine) {
+      const { __err, ...payload } = item
+      const { error } = await supabase.from('assault_incidents').insert(payload)
+      if (!error || error.code === '23505') done.add(item.client_id)        // 23505 = already saved earlier
+      else if (!retryable(error)) failed[item.client_id] = error.message
+      else break                                                            // no signal: stop and retry later
+    }
+    const next = readLS(LS_OUTBOX, []).filter(q => !done.has(q.client_id))
+      .map(q => failed[q.client_id] ? { ...q, __err: failed[q.client_id] } : q)
+    writeLS(LS_OUTBOX, next); setOutbox(next)
+    flushing.current = false
+    if (done.size) reload()
+    return done.size
+  }, [userId, reload])
 
   useEffect(() => {
-    fetch(ASSAULT_CSV).then(r => r.ok ? r.text() : Promise.reject()).then(t => setRemote(parseCSV(t)))
-      .catch(() => {}).finally(() => setLoading(false))
-  }, [])
-  useEffect(() => { try { localStorage.setItem(LS_KEY, JSON.stringify(local)) } catch {} }, [local])
+    if (!userId) return
+    reload(); flush()
+    const later = () => { clearTimeout(timer.current); timer.current = setTimeout(reload, 1500) }
+    const ch = supabase.channel('assault-live')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'assault_incidents' }, later).subscribe()
+    const onOnline = () => { flush(); reload() }
+    const onVisible = () => { if (document.visibilityState === 'visible') { flush(); reload() } }
+    window.addEventListener('online', onOnline); document.addEventListener('visibilitychange', onVisible)
+    const t = setInterval(flush, 30000)
+    return () => {
+      supabase.removeChannel(ch); clearInterval(t); clearTimeout(timer.current)
+      window.removeEventListener('online', onOnline); document.removeEventListener('visibilitychange', onVisible)
+    }
+  }, [userId, reload, flush])
 
   const all = useMemo(() => [
-    ...remote.map((r, i) => normalize(r, i)),
-    ...local.map((r, i) => normalize(r, i, true))
-  ].filter(Boolean), [remote, local])
+    ...rows.map(r => fromDb(r)),
+    ...outbox.filter(q => q.reported_by === userId).map(q => fromDb(q, true))
+  ].filter(Boolean), [rows, outbox, userId])
 
   const filtered = useMemo(() => {
     const days = { '30d': 30, '90d': 90, '1y': 365 }[filters.period], now = Date.now()
@@ -115,9 +162,36 @@ export function useAssault() {
     )
   }, [all, filters])
 
-  const addReport    = r => setLocal(l => [...l, { ...r, ID: 'L' + Date.now() }])
-  const removeReport = id => setLocal(l => l.filter(r => r.ID !== id))
+  // ── add a report: save online, or queue on the phone if there is no signal ─
+  const addReport = async (r) => {
+    const item = { client_id: newId(), reported_by: userId, ...r }
+    const { error } = await supabase.from('assault_incidents').insert(item)
+    if (!error) { reload(); return { ok: true } }
+    if (!retryable(error)) return { ok: false, error: error.message }
+    const next = [...readLS(LS_OUTBOX, []), item]
+    writeLS(LS_OUTBOX, next); setOutbox(next)
+    return { ok: true, queued: true }
+  }
+  const removePending = id => {
+    const next = readLS(LS_OUTBOX, []).filter(q => q.client_id !== id)
+    writeLS(LS_OUTBOX, next); setOutbox(next)
+  }
 
+  // ── managers: download the full database as CSV ──────────────────────────
+  const downloadAll = async () => {
+    let out = [], from = 0
+    for (;;) {
+      const { data, error } = await supabase.from('assault_export').select('*').order('ID').range(from, from + 999)
+      if (error) return { ok: false, error: error.message }
+      out = out.concat(data)
+      if (data.length < 1000) break
+      from += 1000
+    }
+    exportCSV(out, `Assault_all_${new Date().toISOString().slice(0, 10)}.csv`)
+    return { ok: true, n: out.length }
+  }
+
+  // ── movement tracker (unchanged) ──────────────────────────────────────────
   const startTrack = () => {
     if (!navigator.geolocation) { setTrack(t => ({ ...t, err: 'Geolocation is not supported on this device.' })); return }
     setTrack(t => ({ ...t, on: true, trail: [], dist: 0, start: Date.now(), err: '' }))
@@ -143,8 +217,10 @@ export function useAssault() {
   const resetTrack = () => setTrack(t => ({ ...t, trail: [], dist: 0, pos: t.on ? t.pos : null, start: t.on ? Date.now() : null }))
   useEffect(() => () => { if (watch.current != null) navigator.geolocation.clearWatch(watch.current) }, [])
 
-  return { all, filtered, local, loading, filters, setFilters, view, setView, pick, setPick, picking, setPicking,
-           track, setTrack, startTrack, stopTrack, resetTrack, addReport, removeReport }
+  return { all, filtered, outbox: outbox.filter(q => q.reported_by === userId), sync, role: auth?.role || 'guard', email: auth?.user?.email || '',
+           filters, setFilters, view, setView, pick, setPick, picking, setPicking,
+           track, setTrack, startTrack, stopTrack, resetTrack,
+           addReport, removePending, reload, flush, downloadAll }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -180,7 +256,7 @@ export function AssaultMapLayer({ mapRef, active, a }) {
             Victim: ${esc(c.victim)} · Weapon: ${esc(c.weapon)}<br>
             ${c.farm || c.field ? `Farm/Field: ${esc(c.farm)} ${esc(c.field)}<br>` : ''}
             ${c.notes ? `<i>${esc(c.notes)}</i><br>` : ''}
-            <small>ID ${esc(c.id)}${c.local ? ' · local report' : ''}</small>`)
+            <small>${esc(c.ref)}${c.pending ? ' · waiting to upload' : ''}</small>`)
           .addTo(g)
       })
     }
@@ -312,13 +388,13 @@ function Section({ title, badge, accent = BLUE, open, onToggle, children }) {
 // PANEL
 // ─────────────────────────────────────────────────────────────────────────────
 export function AssaultPanel({ a, mapRef, showToast }) {
-  const { filtered: list, all, loading, filters, setFilters, view, setView, pick, setPick, picking, setPicking, track } = a
+  const { filtered: list, all, sync, filters, setFilters, view, setView, pick, setPick, picking, setPicking, track } = a
   const nowLocal = () => new Date(Date.now() - new Date().getTimezoneOffset() * 6e4).toISOString().slice(0, 16)
   const [form, setForm] = useState({ type: TYPES[0], severity: 'Moderate', victim: VICTIMS[0], weapon: 'None', when: nowLocal(), farm: '', field: '', notes: '' })
   const setF = (k, v) => setForm(f => ({ ...f, [k]: v }))
   const setFilter = (k, v) => setFilters(f => ({ ...f, [k]: v }))
 
-  const [open, setOpen] = useState({ overview: true, tracker: true, filters: false, severity: false, time: false, people: false, zones: false, report: false, saved: false })
+  const [open, setOpen] = useState({ overview: true, tracker: true, filters: false, severity: false, time: false, people: false, zones: false, report: false, data: false })
   const tog = k => setOpen(o => ({ ...o, [k]: !o[k] }))
   const allOpen = Object.values(open).every(Boolean)
   const setAll = v => setOpen(o => Object.fromEntries(Object.keys(o).map(k => [k, v])))
@@ -360,12 +436,25 @@ export function AssaultPanel({ a, mapRef, showToast }) {
       p => { setPick({ lat: p.coords.latitude, lng: p.coords.longitude }); showToast('Location set from GPS') },
       () => showToast('Could not read GPS — allow location access'), { enableHighAccuracy: true, timeout: 10000 })
   }
-  const save = () => {
+  const [saving, setSaving] = useState(false)
+  const save = async () => {
+    if (saving) return
     if (!pick) { showToast('Set the incident location first'); return }
-    const [Date_, Time] = form.when.split('T')
-    a.addReport({ Date: Date_, Time, Latitude: pick.lat.toFixed(6), Longitude: pick.lng.toFixed(6), Type: form.type, Severity: form.severity,
-      Victim: form.victim, Weapon: form.weapon, Farm: form.farm, Field: form.field, Notes: form.notes.trim() })
-    setPick(null); setForm(f => ({ ...f, notes: '', when: nowLocal() })); showToast('Incident saved on this device')
+    setSaving(true)
+    const res = await a.addReport({
+      occurred_at: new Date(form.when).toISOString(),
+      latitude: Number(pick.lat.toFixed(6)), longitude: Number(pick.lng.toFixed(6)),
+      type: form.type, severity: form.severity, victim: form.victim, weapon: form.weapon,
+      farm: form.farm.trim() || null, field: form.field.trim() || null, notes: form.notes.trim() || null
+    })
+    setSaving(false)
+    if (!res.ok) { showToast('Not saved: ' + res.error); return }
+    setPick(null); setForm(f => ({ ...f, notes: '', when: nowLocal() }))
+    showToast(res.queued ? 'No signal — saved on this phone, uploads automatically' : 'Incident saved to the database')
+  }
+  const download = async () => {
+    const r = await a.downloadAll()
+    showToast(r.ok ? `Downloaded ${r.n} records` : 'Download failed: ' + r.error)
   }
 
   const km = m => m >= 1000 ? (m / 1000).toFixed(2) + ' km' : Math.round(m) + ' m'
@@ -394,7 +483,8 @@ export function AssaultPanel({ a, mapRef, showToast }) {
         <Kpi label="Last 30d" value={S.last30} color={GREEN} />
       </div>
       <div style={{ fontSize: 9, color: MUTED, marginTop: 8 }}>
-        {loading ? 'Loading Assault.csv…' : `${all.length} records loaded (${a.local.length} saved on this device)`}
+        {sync.loading ? 'Syncing with database…' : sync.error ? sync.error
+          : `Live database · ${all.length} records · synced ${sync.at ? new Date(sync.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—'}`}
       </div>
     </Section>
 
@@ -469,7 +559,7 @@ export function AssaultPanel({ a, mapRef, showToast }) {
       </Section>
     </>) : (
       <div className="card" style={{ fontSize: 11, color: MUTED, lineHeight: 1.7 }}>
-        No cases match yet. Report an incident below, or add an <b>Assault.csv</b> file to your data repository.
+        No cases match yet. Change the filters, or report an incident below.
       </div>
     )}
 
@@ -515,30 +605,36 @@ export function AssaultPanel({ a, mapRef, showToast }) {
       {/* sticky save bar: stays visible while scrolling through the form */}
       <div style={{ position: 'sticky', bottom: 0, margin: '0 -12px -12px', padding: '10px 12px 12px', background: '#0a1426', borderTop: '1px solid rgba(255,255,255,0.08)' }}>
         {!pick && <div style={{ fontSize: 10, color: AMBER, marginBottom: 6, textAlign: 'center' }}>Set a location (step 1) to enable saving</div>}
-        <button type="button" onClick={save} disabled={!pick}
+        <button type="button" onClick={save} disabled={!pick || saving}
           style={{ width: '100%', height: 44, borderRadius: 8, border: 'none', cursor: pick ? 'pointer' : 'not-allowed', fontSize: 13, fontWeight: 700,
                    letterSpacing: 0.5, fontFamily: 'inherit', color: '#fff', opacity: pick ? 1 : 0.45,
                    background: `linear-gradient(135deg, ${RED}, #b3202c)`, boxShadow: pick ? `0 0 14px ${RED}55` : 'none' }}>
-          Save incident
+          {saving ? 'Saving…' : 'Save incident'}
         </button>
       </div>
     </Section>
 
-    {/* Local data */}
-    {a.local.length > 0 && (
-      <Section title="Saved on this device" accent={GREEN} open={open.saved} onToggle={() => tog('saved')} badge={a.local.length}>
-        <div style={{ maxHeight: 140, overflowY: 'auto', marginBottom: 8 }}>
-          {a.local.map(r => (
-            <div key={r.ID} className="village-row">
-              <span style={{ flex: 1, fontSize: 10 }}>{r.Date} · {r.Type}</span>
-              <span style={{ color: RED, cursor: 'pointer', fontSize: 16, padding: '0 6px' }} onClick={() => a.removeReport(r.ID)}>×</span>
+    {/* Data & sync */}
+    <Section title="Data & Sync" accent={GREEN} open={open.data} onToggle={() => tog('data')} badge={a.outbox.length ? `${a.outbox.length} pending` : ''}>
+      <div style={{ fontSize: 10.5, color: 'rgba(255,255,255,0.55)', lineHeight: 1.8, marginBottom: 8 }}>
+        Signed in as <b style={{ color: '#dce8f5' }}>{a.email}</b> ({a.role})<br />
+        {sync.error ? <span style={{ color: AMBER }}>{sync.error}</span> : 'Connected to the live database'}
+      </div>
+      {a.outbox.length > 0 && (
+        <div style={{ marginBottom: 8 }}>
+          <div style={SUB}>Waiting to upload ({a.outbox.length})</div>
+          {a.outbox.map(r => (
+            <div key={r.client_id} className="village-row">
+              <span style={{ flex: 1, fontSize: 10 }}>{new Date(r.occurred_at).toLocaleDateString()} · {r.type}{r.__err ? <span style={{ color: RED }}> — {r.__err}</span> : ''}</span>
+              <span style={{ color: RED, cursor: 'pointer', fontSize: 16, padding: '0 6px' }} onClick={() => a.removePending(r.client_id)}>×</span>
             </div>
           ))}
+          <button className="btn btn-primary" style={{ marginTop: 6 }} onClick={async () => { const n = await a.flush(); showToast(n ? `${n} uploaded` : 'Still no connection') }}>Upload now</button>
         </div>
-        <button className="btn btn-primary" onClick={() => exportCSV(a.local)}>Export as CSV</button>
-        <div style={{ fontSize: 9, color: MUTED }}>Reports live in this browser only. Export, then merge into Assault.csv to share across devices.</div>
-      </Section>
-    )}
+      )}
+      <button className="btn btn-ghost" onClick={() => { a.reload(); showToast('Refreshing…') }}>Refresh from database</button>
+      {a.role === 'manager' && <button className="btn btn-primary" onClick={download}>Download all records (CSV)</button>}
+    </Section>
 
     <div style={{ height: 90 }} />
   </>)
